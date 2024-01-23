@@ -1,0 +1,42 @@
+From 67c21cf5bf624c000e60979481f8edc64f7a7d1e Mon Sep 17 00:00:00 2001
+From: Jacopo Mondi <jacopo@jmondi.org>
+Date: Thu, 19 Nov 2020 17:19:33 +0100
+Subject: [PATCH 07/21] media: ov5647: Replace license with SPDX identifier
+
+Replace the boilerplate license text with the SPDX identifier.
+
+Signed-off-by: Jacopo Mondi <jacopo@jmondi.org>
+Signed-off-by: Sakari Ailus <sakari.ailus@linux.intel.com>
+Signed-off-by: Mauro Carvalho Chehab <mchehab+huawei@kernel.org>
+---
+ drivers/media/i2c/ov5647.c | 10 +---------
+ 1 file changed, 1 insertion(+), 9 deletions(-)
+
+diff --git a/drivers/media/i2c/ov5647.c b/drivers/media/i2c/ov5647.c
+index f8e982407ed6..5c5449c42edf 100644
+--- a/drivers/media/i2c/ov5647.c
++++ b/drivers/media/i2c/ov5647.c
+@@ -1,3 +1,4 @@
++// SPDX-License-Identifier: GPL-2.0
+ /*
+  * A V4L2 driver for OmniVision OV5647 cameras.
+  *
+@@ -8,15 +9,6 @@
+  * Copyright (C) 2006-7 Jonathan Corbet <corbet@lwn.net>
+  *
+  * Copyright (C) 2016, Synopsys, Inc.
+- *
+- * This program is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU General Public License as
+- * published by the Free Software Foundation version 2.
+- *
+- * This program is distributed .as is. WITHOUT ANY WARRANTY of any
+- * kind, whether express or implied; without even the implied warranty
+- * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+  */
+ 
+ #include <linux/clk.h>
+-- 
+2.34.1
+

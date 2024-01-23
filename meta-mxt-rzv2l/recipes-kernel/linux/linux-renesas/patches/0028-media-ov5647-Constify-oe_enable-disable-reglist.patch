@@ -1,0 +1,37 @@
+From d07440702da0ff084f2bb97b1396d75fd7acc53f Mon Sep 17 00:00:00 2001
+From: Jacopo Mondi <jacopo@jmondi.org>
+Date: Thu, 19 Nov 2020 17:35:48 +0100
+Subject: [PATCH 27/32] media: ov5647: Constify oe_enable/disable reglist
+
+Make the two register-value lists const.
+
+Signed-off-by: Jacopo Mondi <jacopo@jmondi.org>
+Signed-off-by: Sakari Ailus <sakari.ailus@linux.intel.com>
+Signed-off-by: Mauro Carvalho Chehab <mchehab+huawei@kernel.org>
+---
+ drivers/media/i2c/ov5647.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/i2c/ov5647.c b/drivers/media/i2c/ov5647.c
+index 8061058e6df8..963f51656266 100644
+--- a/drivers/media/i2c/ov5647.c
++++ b/drivers/media/i2c/ov5647.c
+@@ -121,13 +121,13 @@ static inline struct ov5647 *to_sensor(struct v4l2_subdev *sd)
+ 	return container_of(sd, struct ov5647, sd);
+ }
+ 
+-static struct regval_list sensor_oe_disable_regs[] = {
++static const struct regval_list sensor_oe_disable_regs[] = {
+ 	{0x3000, 0x00},
+ 	{0x3001, 0x00},
+ 	{0x3002, 0x00},
+ };
+ 
+-static struct regval_list sensor_oe_enable_regs[] = {
++static const struct regval_list sensor_oe_enable_regs[] = {
+ 	{0x3000, 0x0f},
+ 	{0x3001, 0xff},
+ 	{0x3002, 0xe4},
+-- 
+2.34.1
+

@@ -1,0 +1,63 @@
+From 4a0d74561b768cdc72af0c33a876ddc7a287f83b Mon Sep 17 00:00:00 2001
+From: Jacopo Mondi <jacopo@jmondi.org>
+Date: Thu, 19 Nov 2020 17:32:29 +0100
+Subject: [PATCH 10/21] media: ov5647: Implement enum_frame_size()
+
+Implement the .enum_frame_size subdev pad operation.
+
+As the driver only supports one format and one resolution at the moment
+the implementation is trivial.
+
+Signed-off-by: Jacopo Mondi <jacopo@jmondi.org>
+Signed-off-by: Sakari Ailus <sakari.ailus@linux.intel.com>
+Signed-off-by: Mauro Carvalho Chehab <mchehab+huawei@kernel.org>
+---
+ drivers/media/i2c/ov5647.c | 25 ++++++++++++++++++++++---
+ 1 file changed, 22 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/i2c/ov5647.c b/drivers/media/i2c/ov5647.c
+index ad3397881c9a..2e7a6cb39689 100644
+--- a/drivers/media/i2c/ov5647.c
++++ b/drivers/media/i2c/ov5647.c
+@@ -484,6 +484,24 @@ static int ov5647_enum_mbus_code(struct v4l2_subdev *sd,
+ 	return 0;
+ }
+ 
++static int ov5647_enum_frame_size(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_pad_config *cfg,
++				  struct v4l2_subdev_frame_size_enum *fse)
++{
++	if (fse->index)
++		return -EINVAL;
++
++	if (fse->code != MEDIA_BUS_FMT_SBGGR8_1X8)
++		return -EINVAL;
++
++	fse->min_width = 640;
++	fse->max_width = 640;
++	fse->min_height = 480;
++	fse->max_height = 480;
++
++	return 0;
++}
++
+ static int ov5647_set_get_fmt(struct v4l2_subdev *sd,
+ 			      struct v4l2_subdev_pad_config *cfg,
+ 			      struct v4l2_subdev_format *format)
+@@ -502,9 +520,10 @@ static int ov5647_set_get_fmt(struct v4l2_subdev *sd,
+ }
+ 
+ static const struct v4l2_subdev_pad_ops ov5647_subdev_pad_ops = {
+-	.enum_mbus_code = ov5647_enum_mbus_code,
+-	.set_fmt =	  ov5647_set_get_fmt,
+-	.get_fmt =	  ov5647_set_get_fmt,
++	.enum_mbus_code		= ov5647_enum_mbus_code,
++	.enum_frame_size	= ov5647_enum_frame_size,
++	.set_fmt		= ov5647_set_get_fmt,
++	.get_fmt		= ov5647_set_get_fmt,
+ };
+ 
+ static const struct v4l2_subdev_ops ov5647_subdev_ops = {
+-- 
+2.34.1
+

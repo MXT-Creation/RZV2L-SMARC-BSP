@@ -1,0 +1,34 @@
+From 5984fef1f5e79fcb8859b7c1d7f7bd993133c064 Mon Sep 17 00:00:00 2001
+From: Jacopo Mondi <jacopo@jmondi.org>
+Date: Thu, 19 Nov 2020 17:19:31 +0100
+Subject: [PATCH 05/21] media: ov5647: Fix format initialization
+
+The driver currently support a single format. Fix its initialization to
+use the only supported resolution.
+
+Signed-off-by: Jacopo Mondi <jacopo@jmondi.org>
+Signed-off-by: Sakari Ailus <sakari.ailus@linux.intel.com>
+Signed-off-by: Mauro Carvalho Chehab <mchehab+huawei@kernel.org>
+---
+ drivers/media/i2c/ov5647.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/i2c/ov5647.c b/drivers/media/i2c/ov5647.c
+index 9093a1ca7bce..04551ed683df 100644
+--- a/drivers/media/i2c/ov5647.c
++++ b/drivers/media/i2c/ov5647.c
+@@ -560,9 +560,8 @@ static int ov5647_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
+ 	crop->height = OV5647_WINDOW_HEIGHT_DEF;
+ 
+ 	format->code = MEDIA_BUS_FMT_SBGGR8_1X8;
+-
+-	format->width = OV5647_WINDOW_WIDTH_DEF;
+-	format->height = OV5647_WINDOW_HEIGHT_DEF;
++	format->width = 640;
++	format->height = 480;
+ 	format->field = V4L2_FIELD_NONE;
+ 	format->colorspace = V4L2_COLORSPACE_SRGB;
+ 
+-- 
+2.34.1
+

@@ -1,0 +1,43 @@
+From 4a405dcdc59a95f24b8d174fa9f62b834ad93802 Mon Sep 17 00:00:00 2001
+From: Jacopo Mondi <jacopo@jmondi.org>
+Date: Thu, 19 Nov 2020 17:32:30 +0100
+Subject: [PATCH 11/21] media: ov5647: Protect s_stream() with mutex
+
+Use the driver mutex to protect s_stream() operations.
+This will become more relevant once the sensor will support more formats
+and set_format() could be issue concurrently to s_stream().
+
+Signed-off-by: Jacopo Mondi <jacopo@jmondi.org>
+Signed-off-by: Sakari Ailus <sakari.ailus@linux.intel.com>
+Signed-off-by: Mauro Carvalho Chehab <mchehab+huawei@kernel.org>
+---
+ drivers/media/i2c/ov5647.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/i2c/ov5647.c b/drivers/media/i2c/ov5647.c
+index 2e7a6cb39689..69a5e25dcd70 100644
+--- a/drivers/media/i2c/ov5647.c
++++ b/drivers/media/i2c/ov5647.c
+@@ -462,10 +462,17 @@ static const struct v4l2_subdev_core_ops ov5647_subdev_core_ops = {
+ 
+ static int ov5647_s_stream(struct v4l2_subdev *sd, int enable)
+ {
++	struct ov5647 *sensor = to_state(sd);
++	int ret;
++
++	mutex_lock(&sensor->lock);
+ 	if (enable)
+-		return ov5647_stream_on(sd);
++		ret = ov5647_stream_on(sd);
+ 	else
+-		return ov5647_stream_off(sd);
++		ret = ov5647_stream_off(sd);
++	mutex_unlock(&sensor->lock);
++
++	return ret;
+ }
+ 
+ static const struct v4l2_subdev_video_ops ov5647_subdev_video_ops = {
+-- 
+2.34.1
+
