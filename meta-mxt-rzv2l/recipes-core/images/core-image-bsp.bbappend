@@ -10,5 +10,6 @@ IMAGE_INSTALL_append = " \
 	iperf3 \
 	da16600 \
 	app-usbcam-http \
+	app-usbcam-client \
 "
 
