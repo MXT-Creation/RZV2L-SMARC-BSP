@@ -1,0 +1,12 @@
+[Unit]
+Description=RZ/V AI Evaluation Software - App CAM via HTTP
+After=systemd-user-sessions.service
+
+[Service]
+WorkingDirectory=/home/root/app-usbcam-http
+ExecStart=/home/root/app-usbcam-http/sample_app_usbcam_http
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
