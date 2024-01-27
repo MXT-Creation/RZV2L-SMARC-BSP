@@ -174,6 +174,11 @@ $('#dialog').on('hidden.bs.modal', function (e) {
 
 
 $(() => {
+  socket.onclose = function() {
+      setTimeout(() => {
+          window.location.reload();
+      }, "3000");
+  }
   socket.onmessage = function (event) {
     // Calculate process time
     let nowTime = moment();
