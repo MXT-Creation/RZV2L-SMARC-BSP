@@ -349,6 +349,9 @@ int8_t Camera::open_camera_device()
             return -1;
         }
 
+        printf("[INFO] Camera '%s' Driver '%s'\n", dev_name, fmt.driver);
+        break;
+
         /* Search USB camera */
         ret = strcmp((const char*)fmt.driver, "uvcvideo");
         if (0 == ret)
@@ -399,7 +402,8 @@ int8_t Camera::init_camera_fmt()
     setfps->parm.capture.timeperframe.denominator = 30;
     if (ioctl(m_fd, VIDIOC_S_PARM, setfps) < 0)
     {
-        perror("VIDIOC_S_PARM");
+        // ignore VIDIOC_S_PARM failure; for CSI2 cameras, this does not work
+        printf("[WARN] VIDIOC_S_PARM Failed: %d\n", errno);
     }
 
     return 0;
