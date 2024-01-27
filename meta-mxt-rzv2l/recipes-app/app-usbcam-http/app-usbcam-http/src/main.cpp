@@ -77,7 +77,7 @@ int32_t main(int32_t argc, char* argv[])
     // start ws
     WebsocketServer ws;
     // Start Websocket server
-    ws.start_server("192.168.1.11", "3000", "ws");
+    ws.start_server("0.0.0.0", "3000", "ws");
     ws.wait_connection();
     ws._commandReceived = &command_rsv;
     ws._diconnected = &on_disconnect;
