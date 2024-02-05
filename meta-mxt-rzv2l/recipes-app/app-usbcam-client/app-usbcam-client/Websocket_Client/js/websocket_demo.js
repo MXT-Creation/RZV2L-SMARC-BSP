@@ -17,6 +17,10 @@ let nowTimes = document.getElementsByClassName('now_time');
 let predWindowData = document.getElementById('pred_window');
 let drpWindowData = document.getElementById('drp_window');
 
+object_colors = [ 'orange', 'magenta', 'red', 'yellow', 'green', 'blue' ];
+object_color_idx = 0;
+object_color_map = new Map();
+
 defaultCtx.fillStyle = 'darkgray';
 defaultCtx.fillRect(0, 0, 640, 480);
 defaultCtx.font = '12pt Arial';
@@ -229,7 +233,7 @@ $(() => {
     }
     // YOLOv3, TinyYOLOv2
     else if (datas.command_name === 'object_detection') {
-      predCtx.linewidth = 8;
+      predCtx.lineWidth = 8;
       predCtx.strokeStyle = 'blue';
       predCtx.fillStyle = 'blue';
       defaultCtx.fillStyle = 'blue';
@@ -276,6 +280,18 @@ $(() => {
         predCtx.drawImage(webcam, 0, 0, predCanvas.width, predCanvas.height);
 
         for (i = 0; i < len; i++) {
+          let used_color = object_color_map.get(cls[i]);
+          if (used_color === undefined) {
+              used_color = 'blue';
+              if (object_color_idx < object_colors.length) {
+                 used_color = object_colors[object_color_idx];
+                 object_color_map.set(cls[i], used_color);
+                 object_color_idx++;
+              }
+          }
+
+          predCtx.strokeStyle = used_color;
+          predCtx.fillStyle = used_color;
           predCtx.strokeRect(x[i] * ratio_w, y[i] * ratio_h, w[i] * ratio_w, h[i] * ratio_h);
           predCtx.fillText(cls[i], x[i] * ratio_w, (y[i] * ratio_h + h[i] * ratio_h + 16));
         }
@@ -292,7 +308,7 @@ $(() => {
     }
     // HRNet
     else if (datas.command_name === 'pose_detection') {
-      predCtx.linewidth = 8;
+      predCtx.lineWidth = 4;
       predCtx.strokeStyle = 'yellow';
       predCtx.fillStyle = 'yellow';
       defaultCtx.fillStyle = 'yellow';
@@ -366,7 +382,7 @@ $(() => {
     }
     // ResNet50
     else if (datas.command_name === 'classfication_detection') {
-      predCtx.linewidth = 8;
+      predCtx.lineWidth = 8;
       predCtx.strokeStyle = 'red';
       predCtx.fillStyle = 'red';
       defaultCtx.fillStyle = 'red';
