@@ -11,6 +11,7 @@ SRC_URI_append +=  "\
 	file://fragment-03-can.cfg \
 	file://fragment-04-ov5647.cfg \
 	file://fragment-05-imx219.cfg \
+	file://fragment-06-mscc-phy.cfg \
 	file://patches/0001-arm64-dts-renesas-add-r9a07g054l2-ov5647-smarc-dts.patch \
 	file://patches/0002-media-ov5647-Add-support-for-PWDN-GPIO.patch \
 	file://patches/0003-media-ov5647-Add-support-for-non-continuous-clock-mo.patch \
