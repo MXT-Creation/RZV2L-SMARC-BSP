@@ -1,0 +1,24 @@
+--- a/arch/arm64/boot/dts/renesas/rzg2l-smarc.dtsi
++++ b/arch/arm64/boot/dts/renesas/rzg2l-smarc.dtsi
+@@ -111,17 +111,17 @@
+ };
+ 
+ &vccq_sdhi1 {
+-	gpios = <&pinctrl RZG2L_GPIO(39, 1) GPIO_ACTIVE_HIGH>;
++	gpios = <&pinctrl RZG2L_GPIO(8, 0) GPIO_ACTIVE_HIGH>;
+ };
+ 
+ &ov5645 {
+-	enable-gpios = <&pinctrl RZG2L_GPIO(2, 0) GPIO_ACTIVE_HIGH>;
+-	reset-gpios = <&pinctrl RZG2L_GPIO(40, 2) GPIO_ACTIVE_LOW>;
++	enable-gpios = <&pinctrl RZG2L_GPIO(10, 0) GPIO_ACTIVE_LOW>;
++	reset-gpios = <&pinctrl RZG2L_GPIO(14, 1) GPIO_ACTIVE_LOW>;
+ };
+ 
+ &adv7535 {
+ 	interrupt-parent = <&pinctrl>;
+-	interrupts = <RZG2L_GPIO(2, 1) IRQ_TYPE_EDGE_FALLING>;
++	interrupts = <RZG2L_GPIO(1, 0) IRQ_TYPE_EDGE_FALLING>;
+ };
+ 
+ #if (MTU3_PWM_SUPPORT || MTU3_PHASE_COUNTING_SUPPORT)
