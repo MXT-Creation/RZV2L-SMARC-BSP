@@ -1,10 +1,11 @@
 FILESEXTRAPATHS_prepend := "${THISDIR}/${PN}:"
 
 KERNEL_DEVICETREE = " \
-	renesas/r9a07g054l2-smarc.dtb \
+	renesas/r9a07g054l2-mxt-smarc.dtb \
 "
 
 SRC_URI_append +=  "\
+	file://dts/ \
 	file://fragment-01-usb-ethernet.cfg \
 	file://fragment-02-wifi.cfg \
 	file://fragment-03-can.cfg \
@@ -41,9 +42,15 @@ SRC_URI_append +=  "\
 	file://patches/0029-media-ov5647-Support-VIDIOC_SUBSCRIBE_EVENT.patch \
 	file://patches/0030-media-ov5647-Remove-640x480-SBGGR8-mode.patch \
 	file://patches/0031-media-i2c-ov5647-use-pm_runtime_resume_and_get.patch \
-	file://patches/1001_rzg2l-smarc-pinfunction.patch \
-	file://patches/1002_rzg2l-smarc.patch \
-	file://patches/1003_rzg2l-smarc-som.patch \
-	file://patches/1004_rz-smarc-common.patch \
 "
+
+do_compile_prepend() {
+	cp -rf ${WORKDIR}/dts/* ${S}/arch/arm64/boot/dts/renesas/
+}
+
+do_install_append() {
+	# This way we get a booting system, even if the camera is not the same
+	install -m 0755 -d ${D}/boot
+	ln -s r9a07g054l2-mxt-smarc.dtb ${D}/boot/r9a07g054l2-smarc.dtb
+}
 
