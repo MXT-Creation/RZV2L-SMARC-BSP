@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+/*
+ * Device Tree Source for the RZ/V2L SMARC MXT board variant
+ *
+ * Copyright (C) 2024 MXT Creation SRL
+ */
+
+/dts-v1/;
+#include "r9a07g054l2-smarc.dts"
+#include <dt-bindings/net/mscc-phy-vsc8531.h>
+
+/ {
+	aliases {
+		i2c2 = &i2c2;
+	};
+};
+
+&pinctrl {
+	i2c2_pins: i2c2 {
+		pinmux = <RZG2L_PORT_PINMUX(42, 3, 1)>, /* SDA */
+			 <RZG2L_PORT_PINMUX(42, 4, 1)>; /* SCL */
+	};
+
+	i2c3_pins: i2c3 {
+		pinmux = <RZG2L_PORT_PINMUX(48, 2, 3)>, /* SDA */
+			 <RZG2L_PORT_PINMUX(48, 3, 3)>; /* SCL */
+	};
+
+	sd1-pwr-en-hog {
+		gpios = <RZG2L_GPIO(39, 0) GPIO_ACTIVE_HIGH>;
+	};
+
+	spi0_pins: spi0 {
+		pinmux = <RZG2L_PORT_PINMUX(47, 0, 5)>, /* CK */
+			 <RZG2L_PORT_PINMUX(47, 1, 5)>, /* MOSI */
+			 <RZG2L_PORT_PINMUX(47, 2, 5)>, /* MISO */
+			 <RZG2L_PORT_PINMUX(47, 3, 5)>; /* SSL */
+	};
+
+	wifi-rtc-pwr{
+		gpio-hog;
+		gpios = <RZG2L_GPIO(14, 0) GPIO_ACTIVE_LOW>;
+		output-low;
+		line-name = "wifi-rtc-pwr";
+	};
+
+	gpio-sd0-pwr-en-hog {
+		gpios = <RZG2L_GPIO(4, 1) GPIO_ACTIVE_HIGH>;
+	};
+
+	sd0-dev-sel-hog {
+		gpios = <RZG2L_GPIO(8, 1) GPIO_ACTIVE_HIGH>;
+	};
+
+};
+
+&vccq_sdhi1 {
+	gpios = <&pinctrl RZG2L_GPIO(8, 0) GPIO_ACTIVE_HIGH>;
+};
+
+&ov5645 {
+	enable-gpios = <&pinctrl RZG2L_GPIO(10, 0) GPIO_ACTIVE_LOW>;
+	reset-gpios = <&pinctrl RZG2L_GPIO(14, 1) GPIO_ACTIVE_LOW>;
+};
+
+&adv7535 {
+	interrupt-parent = <&pinctrl>;
+	interrupts = <RZG2L_GPIO(1, 0) IRQ_TYPE_EDGE_FALLING>;
+};
+
+&eth0 {
+	/delete-node/ ethernet-phy@7;
+
+	phy0: ethernet-phy@0 {
+		compatible = "ethernet-phy-id0007.0570";
+		reg = <0>;
+ 
+		interrupt-parent = <&pinctrl>;
+		interrupts = <RZG2L_GPIO(3, 0) IRQ_TYPE_EDGE_FALLING>;
+
+		vsc8531,vddmac		= <3300>;
+		vsc8531,edge-slowdown	= <7>;
+		vsc8531,led-0-mode	= <VSC8531_LINK_ACTIVITY>;
+		vsc8531,led-1-mode	= <VSC8531_LINK_1000_ACTIVITY>;
+	};
+};
+
+&eth1 {
+	/delete-node/ ethernet-phy@7;
+
+	phy1: ethernet-phy@0 {
+		compatible = "ethernet-phy-id0007.0572";
+		reg = <0>;
+
+		interrupt-parent = <&pinctrl>;
+		interrupts = <RZG2L_GPIO(3, 1) IRQ_TYPE_LEVEL_LOW>;
+
+		vsc8531,vddmac		= <3300>;
+		vsc8531,edge-slowdown	= <7>;
+		vsc8531,led-0-mode	= <VSC8531_LINK_ACTIVITY>;
+		vsc8531,led-1-mode	= <VSC8531_LINK_1000_ACTIVITY>;
+	};
+};
+
+&i2c3 {
+	/delete-node/ raa215300@12;
+	/delete-node/ isl1208@6f;
+};
+
+&i2c2 {
+	pinctrl-0 = <&i2c2_pins>;
+	pinctrl-names = "default";
+	clock-frequency = <400000>;
+
+	status = "okay";
+
+	pmic: raa215300@12 {
+		compatible = "renesas,raa215300";
+		reg = <0x12>;
+
+		rtc-enable;
+	};
+
+	rtc: isl1208@6f {
+		compatible = "isil,isl1208";
+		reg = <0x6f>;
+
+		external-oscillator;
+	};
+};
+
+&spi0 {
+	pinctrl-0 = <&spi0_pins>;
+	pinctrl-names = "default";
+	dmas = <&dmac 0x2e95>, <&dmac 0x2e96>;
+	dma-names = "tx", "rx";
+
+	status = "okay";
+
+	da16xxx@0 {
+		compatible = "renesas,da16xxx";
+		reg = <0>;
+		spi-max-frequency = <25000000>;
+		reset-gpios = <&pinctrl RZG2L_GPIO(14, 0) GPIO_ACTIVE_LOW>;
+		irq0-gpios = <&pinctrl RZG2L_GPIO(0, 0) GPIO_ACTIVE_LOW>;
+		irq1-gpios = <&pinctrl RZG2L_GPIO(1, 1) GPIO_ACTIVE_LOW>;
+	};
+};
