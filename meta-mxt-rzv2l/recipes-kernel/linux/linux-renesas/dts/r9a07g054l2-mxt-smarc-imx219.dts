@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+/*
+ * Device Tree Source for the RZ/V2L SMARC MXT board variant
+ *
+ * Copyright (C) 2024 MXT Creation SRL
+ */
+
+/dts-v1/;
+#include "r9a07g054l2-mxt-smarc.dts"
+
+/ {
+	cam1_1v8_supply: 1p8v {
+		compatible = "regulator-fixed";
+		regulator-name = "cam1_1v8_supply";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+	};
+
+	cam1_2v8_supply: 2p8v {
+		compatible = "regulator-fixed";
+		regulator-name = "cam1_2v8_supply";
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+		gpios = <&pinctrl RZG2L_GPIO(10, 0) 0>;
+		startup-delay-us = <300000>;
+	};
+
+	cam1_1v2_supply: 1p2v {
+		compatible = "regulator-fixed";
+		regulator-name = "cam1_1v2_supply";
+		regulator-min-microvolt = <1200000>;
+		regulator-max-microvolt = <1200000>;
+		regulator-always-on;
+	};
+};
+
+&clk_ext_camera {
+	compatible = "fixed-clock";
+	#clock-cells = <0>;
+	clock-frequency = <24000000>;
+};
+
+&i2c0 {
+	pinctrl-0 = <&i2c0_pins>;
+	pinctrl-names = "default";
+
+	status = "okay";
+
+	imx219: imx219@10 {
+		compatible = "sony,imx219";
+		reg = <0x10>;
+		clock-names = "xclk";
+		clocks = <&clk_ext_camera>;
+		clock-frequency = <24000000>;
+		VANA-supply = <&cam1_2v8_supply>;
+		VDIG-supply = <&cam1_1v8_supply>;
+		VDDL-supply = <&cam1_1v2_supply>;
+
+		port {
+			cam1_to_csi: endpoint {
+				clock-lanes = <0>;
+				data-lanes = <1 2>;
+				link-frequencies = /bits/ 64 <456000000>;
+				remote-endpoint = <&csi2_in>;
+			};
+		};
+	};
+
+	/delete-node/ camera@3c;
+};
+
+&csi2 {
+	status = "okay";
+
+	ports {
+		port {
+			csi2_in: endpoint {
+				clock-lanes = <0>;
+				data-lanes = <1 2>;
+				remote-endpoint = <&cam1_to_csi>;
+			};
+		};
+	};
+};
+
