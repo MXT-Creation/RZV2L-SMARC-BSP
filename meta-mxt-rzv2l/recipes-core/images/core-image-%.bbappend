@@ -11,5 +11,5 @@ IMAGE_INSTALL_append = " \
 	da16600 \
 	app-usbcam-http \
 	app-usbcam-client \
+	ustreamer \
 "
-
