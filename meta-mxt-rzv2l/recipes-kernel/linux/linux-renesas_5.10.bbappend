@@ -45,6 +45,8 @@ SRC_URI_append +=  "\
 	file://patches/0029-media-ov5647-Support-VIDIOC_SUBSCRIBE_EVENT.patch \
 	file://patches/0030-media-ov5647-Remove-640x480-SBGGR8-mode.patch \
 	file://patches/0031-media-i2c-ov5647-use-pm_runtime_resume_and_get.patch \
+	file://patches/1001-media-i2c-imx477-port-driver-from-RPi.patch \
+	file://patches/1002-rzv2l-add-support-for-imx708.patch \
 "
 
 do_compile_prepend() {
