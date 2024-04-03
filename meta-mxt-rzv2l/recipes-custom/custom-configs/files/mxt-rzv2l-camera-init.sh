@@ -9,7 +9,8 @@ if media-ctl -d /dev/media0 -V "'ov5647 0-0036':0 [fmt:SBGGR10_1X10/640x480 fiel
 	v4l2-ctl --set-ctrl=white_balance_automatic=1
 	v4l2-ctl --set-ctrl=auto_exposure=0  # 0 = auto-exposure, 1 = manul
 
-	systemctl start ustreamer@640x480.service
+	# FIXME: Don't enable it here, otherwise it clashes with the AI app
+	#systemctl start ustreamer@640x480.service
 
 	exit 0
 fi
@@ -28,7 +29,8 @@ if media-ctl -d /dev/media0 -V "'imx219 0-0010':0 [fmt:SRGGB10_1X10/640x480 fiel
 	v4l2-ctl --set-ctrl=digital_gain=2000
 	v4l2-ctl --set-ctrl=analogue_gain=200
 
-	systemctl start ustreamer@640x480.service
+	# FIXME: Don't enable it here, otherwise it clashes with the AI app
+	#systemctl start ustreamer@640x480.service
 
 	exit 0
 fi
@@ -43,7 +45,8 @@ if media-ctl -d /dev/media0 -V "'imx296 0-001a':0 [fmt:SBGGR10_1X10/640x480 fiel
 	v4l2-ctl --set-ctrl=white_balance_automatic=1
 	v4l2-ctl --set-ctrl=auto_exposure=0  # 0 = auto-exposure, 1 = manul
 
-	systemctl start ustreamer@640x480.service
+	# FIXME: Don't enable it here, otherwise it clashes with the AI app
+	#systemctl start ustreamer@640x480.service
 
 	exit 0
 fi
@@ -56,7 +59,8 @@ if media-ctl -d /dev/media0 -V "'imx708_noir':0 [fmt:SRGGB10_1X10/1536x864 field
 	v4l2-ctl --set-ctrl=digital_gain=2000
 	v4l2-ctl --set-ctrl=analogue_gain=700
 
-	systemctl start ustreamer@1536x864.service
+	# FIXME: Don't enable it here, otherwise it clashes with the AI app
+	#systemctl start ustreamer@1536x864.service
 
 	exit 0
 fi
