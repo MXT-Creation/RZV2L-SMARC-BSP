@@ -85,17 +85,14 @@ let graphChart = new Chart(graphCtx, {
 let model = document.getElementById('change_model');
 model.addEventListener('change', inputChange);
 
-function startModel(model_) {
+function inputChange(event) {
+  // console.log(event.currentTarget.value);
   socket.send(JSON.stringify({
     command_name: 'change_model',
     Value: {
-      model: model_
+      model: event.currentTarget.value
     }
   }));
-}
-
-function inputChange(event) {
-  window.location.href = 'http://' + location.host + "?model=" + event.currentTarget.value;
 }
 
 // Pose Estimation: Line Drawing
@@ -179,48 +176,14 @@ $('#dialog').on('hidden.bs.modal', function (e) {
   disp_application_message=null;
 });
 
-function reload_page() {
-    let model = document.getElementById('change_model');
-    window.location.href = 'http://' + location.host + "?model=" + model.value;
-}
-
-let work_counter = 0;
-let last_work_counter = 0;
-
-function monitor_stalling() {
-    let urlParams = new URLSearchParams(window.location.search);
-    let model = urlParams.get('model');
-    if (model == null || model == '')
-        model = 'TinyYOLOv2';
-    document.getElementById('change_model').value = model;
-
-    setTimeout(() => {
-        if (work_counter == last_work_counter) {
-            reload_page();
-            return;
-        }
-        last_work_counter = work_counter;
-        monitor_stalling();
-    }, "5000");
-}
-
-monitor_stalling();
 
 $(() => {
-  socket.onopen = function() {
-      let model = document.getElementById('change_model').value;
-      if (model == null || model == '')
-          model = 'TinyYOLOv2';
-      document.getElementById('change_model').value = model;
-      startModel(model);
-  }
   socket.onclose = function() {
       setTimeout(() => {
-          reload_page();
+          window.location.reload();
       }, "3000");
   }
   socket.onmessage = function (event) {
-    work_counter++;
     // Calculate process time
     let nowTime = moment();
     if (startTime === null) {
