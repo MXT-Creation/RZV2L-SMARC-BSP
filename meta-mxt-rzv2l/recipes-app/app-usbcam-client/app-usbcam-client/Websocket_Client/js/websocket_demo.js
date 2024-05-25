@@ -176,14 +176,38 @@ $('#dialog').on('hidden.bs.modal', function (e) {
   disp_application_message=null;
 });
 
+let work_counter = 0;
+let last_work_counter = 0;
+
+function start_delayed() {
+    setTimeout(() => {
+        model.value = 'TinyYOLOv2';
+        socket.send(JSON.stringify({ 
+            command_name: 'change_model',
+            Value: {
+                model: model.value
+            }
+        }));
+    }, "2000");
+}
+
+function monitor_stalling() {
+    setTimeout(() => {
+        if (work_counter == last_work_counter) {
+            window.location.reload();
+            return;
+        }
+        last_work_counter = work_counter;
+        monitor_stalling();
+    }, "10000");
+}
+
+start_delayed();
+monitor_stalling();
 
 $(() => {
-  socket.onclose = function() {
-      setTimeout(() => {
-          window.location.reload();
-      }, "3000");
-  }
   socket.onmessage = function (event) {
+    work_counter++;
     // Calculate process time
     let nowTime = moment();
     if (startTime === null) {
