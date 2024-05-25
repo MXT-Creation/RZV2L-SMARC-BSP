@@ -59,5 +59,5 @@ do_compile_prepend() {
 do_install_append() {
 	# This way we get a booting system, even if the camera is not the same
 	install -m 0755 -d ${D}/boot
-	ln -s r9a07g054l2-mxt-smarc.dtb ${D}/boot/r9a07g054l2-smarc.dtb
+	cp ${D}/boot/r9a07g054l2-mxt-smarc.dtb ${D}/boot/r9a07g054l2-smarc.dtb
 }
