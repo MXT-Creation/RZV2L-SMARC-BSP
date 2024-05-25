@@ -31,7 +31,8 @@ usage_check "$1" "$YOCTO_DEPLOY_DIR"
 
 WORK_DIR="${YOCTO_DEPLOY_DIR}/build/sd_card"
 
-ROOTFS_IMG_FILE="$YOCTO_DEPLOY_DIR/core-image-bsp-smarc-rzv2l.tar.bz2"
+WESTON_ROOTFS_IMG_FILE="$YOCTO_DEPLOY_DIR/core-image-weston-smarc-rzv2l.tar.bz2"
+BSP_ROOTFS_IMG_FILE="$YOCTO_DEPLOY_DIR/core-image-bsp-smarc-rzv2l.tar.bz2"
 
 copy_boot_files() {
 	local bootdir="$1"
@@ -46,11 +47,18 @@ copy_boot_files() {
 
 untar_roofs() {
 	local dst="$1"
+	local rootfs_img_file
 
-	echo "Unpacking rootfs file '$ROOTFS_IMG_FILE'"
+	if [ -f "$WESTON_ROOTFS_IMG_FILE" ] ; then
+		rootfs_img_file="$WESTON_ROOTFS_IMG_FILE"
+	else
+		rootfs_img_file="$BSP_ROOTFS_IMG_FILE"
+	fi
+
+	echo "Unpacking rootfs file '$rootfs_img_file'"
 
 	sudo rm -rf ${dst}/*
-	sudo tar -xf "$ROOTFS_IMG_FILE" -C "$dst"
+	sudo tar -xf "$rootfs_img_file" -C "$dst"
 }
 
 populate_sd_card() {
