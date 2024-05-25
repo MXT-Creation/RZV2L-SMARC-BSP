@@ -36,7 +36,8 @@ YoloV3Model::YoloV3Model() :IRecognizeModel(MODEL_DIR.data(), MODEL_NAME.data(),
 {
     std::cout << "Yolo model" << std::endl;
 
-    label_file_map = YoloCommon::load_label_file(LABEL_LIST.data());
+    string basedir = "/usr/share/drpai-models/";
+    label_file_map = YoloCommon::load_label_file(basedir + "/" + LABEL_LIST.data());
 
     num_class = label_file_map.size();
 

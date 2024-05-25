@@ -99,7 +99,7 @@ int32_t RecognizeBase::initialize(IRecognizeModel* model)
     std::cout << "outbuff :" << _model->outBuffSize << std::endl;
 
     _outBuffSize = _model->outBuffSize;
-    dir = _model->model_dir + "/";
+    dir = "/usr/share/drpai-models/" + _model->model_dir + "/";
     address_file = dir + _model->model_prefix + "_addrmap_intm.txt";
     //drpai_file_path[0] = dir + "/drp_desc.bin";
     //drpai_file_path[1] + "/" + _model->model_prefix + "_drpcfg.mem";

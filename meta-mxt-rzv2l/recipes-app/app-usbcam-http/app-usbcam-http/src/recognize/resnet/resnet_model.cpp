@@ -59,7 +59,7 @@ std::map<int32_t, std::string> ResnetModel::load_label_file(string_view  label_f
     int32_t n = 0;
     std::map<int32_t, std::string> list = {};
     std::map<int32_t, std::string> empty = {};
-    std::ifstream infile(label_file_name.data());
+    std::ifstream infile(string("/usr/share/drpai-models/") +  label_file_name.data());
 
     if (!infile.is_open())
     {
