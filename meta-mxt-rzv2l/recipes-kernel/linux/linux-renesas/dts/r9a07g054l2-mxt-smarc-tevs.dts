@@ -24,7 +24,7 @@
 		compatible = "tn,tevs";
 		reg = <0x48>;
 
-		reset-gpios = <&pinctrl RZG2L_GPIO(10, 0) GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&pinctrl RZG2L_GPIO(10, 0) GPIO_ACTIVE_LOW>;
 		continuous-clock = <0>;
 		data-lanes = <2>;
 		data-frequency = <800>;

@@ -627,8 +627,8 @@ index 000000000..bc6a05eac
 +	int ret = 0;
 +	dev_dbg(tevs->dev, "%s()\n", __func__);
 +
-+	gpiod_set_value_cansleep(tevs->host_pwdn_gpio, 1);
-+	gpiod_set_value_cansleep(tevs->reset_gpio, 1);
++	gpiod_set_value_cansleep(tevs->host_pwdn_gpio, 0);
++	gpiod_set_value_cansleep(tevs->reset_gpio, 0);
 +	msleep(TEVS_BOOT_TIME);
 +
 +	ret = tevs_check_boot_state(tevs);
@@ -657,8 +657,8 @@ index 000000000..bc6a05eac
 +	dev_dbg(tevs->dev, "%s()\n", __func__);
 +
 +	if (tevs->hw_reset_mode) {
-+		gpiod_set_value_cansleep(tevs->reset_gpio, 0);
-+		gpiod_set_value_cansleep(tevs->host_pwdn_gpio, 0);
++		gpiod_set_value_cansleep(tevs->reset_gpio, 1);
++		gpiod_set_value_cansleep(tevs->host_pwdn_gpio, 1);
 +	}
 +
 +	return 0;
