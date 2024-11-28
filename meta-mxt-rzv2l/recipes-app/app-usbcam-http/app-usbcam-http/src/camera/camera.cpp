@@ -34,8 +34,8 @@
 
 Camera::Camera()
 {
-    camera_width = 0;
-    camera_height = 0;
+    out_width = 0;
+    out_height = 0;
     camera_color = 0;
 }
 
@@ -92,6 +92,62 @@ static uint64_t calc_umdabuf_addr()
     return ret_address;
 }
 
+void Camera::read_native_resolutions()
+{
+    in_width = out_width;
+    in_height = out_height;
+
+    std::ifstream file("/tmp/app-usbcam-http-config");
+    if (!file)
+        return;
+
+    std::string line;
+    while (std::getline(file, line)) {
+        // Skip empty lines and lines starting with '#'
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+
+        // Find the position of the '=' delimiter
+        size_t delimiterPos = line.find('=');
+        if (delimiterPos != std::string::npos) {
+            // Extract the key and value
+            std::string key = line.substr(0, delimiterPos);
+            std::string value = line.substr(delimiterPos + 1);
+            if (key == "NATIVE_CAMERA_IMAGE_WIDTH")
+                in_width = std::stoi(value);
+            else if (key == "NATIVE_CAMERA_IMAGE_HEIGHT")
+                in_height = std::stoi(value);
+        }
+    }
+
+    // Close the file
+    file.close();
+
+    if (in_width == out_width && out_height == in_height) {
+        adjust_img = false;
+        return;
+    }
+
+    double ws = (double) in_width / (double) out_width;
+    double hs = (double) in_height / (double) out_height;
+    if (ws < hs) {
+        scale_width = out_width;
+        scale_height = in_height / ws;
+        int crop_x = 0;
+        int crop_y = ((scale_height - out_height) & ~1) / 2;
+        crop_region = cv::Rect(crop_x, crop_y, 640, 480);
+    } else {
+        scale_width = in_width / hs;
+        scale_height = out_height;
+        int crop_x = ((scale_width - out_width) & ~1) / 2;
+        int crop_y = 0;
+        crop_region = cv::Rect(crop_x, crop_y, 640, 480);
+    }
+
+    adjust_img = true;
+}
+
 /**
  * @brief start_camera
  * @details  Function to initialize USB camera capture
@@ -104,8 +160,13 @@ int8_t Camera::start_camera()
     int32_t i = 0;
     int32_t n = 0;
 
-    printf("Camera width = %d\n", camera_width);
-    printf("Camera height = %d\n", camera_height);
+    read_native_resolutions();
+
+    printf("Camera (input) width = %d\n", in_width);
+    printf("Camera (input) height = %d\n", in_height);
+
+    printf("Camera (output) width = %d\n", out_width);
+    printf("Camera (output) height = %d\n", out_height);
     printf("Camera channel = %d\n", camera_color);
 
     ret = open_camera_device();
@@ -381,8 +442,8 @@ int8_t Camera::init_camera_fmt()
     struct v4l2_format fmt;
     memset(&fmt, 0, sizeof(fmt));
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    fmt.fmt.pix.width = camera_width;
-    fmt.fmt.pix.height = camera_height;
+    fmt.fmt.pix.width = in_width;
+    fmt.fmt.pix.height = in_height;
     fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
     fmt.fmt.pix.field = V4L2_FIELD_NONE;
 
@@ -538,6 +599,39 @@ int8_t Camera::inference_capture_qbuf()
     return 0;
 }
 
+void rgb_to_yuv422_uyvy(const cv::Mat& rgb, cv::Mat& yuv) {
+    assert(rgb.size() == yuv.size() &&
+           rgb.depth() == CV_8U &&
+           rgb.channels() == 3 &&
+           yuv.depth() == CV_8U &&
+           yuv.channels() == 2);
+    for (int ih = 0; ih < rgb.rows; ih++) {
+        const uint8_t* rgbRowPtr = rgb.ptr<uint8_t>(ih);
+        uint8_t* yuvRowPtr = yuv.ptr<uint8_t>(ih);
+
+        for (int iw = 0; iw < rgb.cols; iw = iw + 2) {
+            const int rgbColIdxBytes = iw * rgb.elemSize();
+            const int yuvColIdxBytes = iw * yuv.elemSize();
+
+            const uint8_t R1 = rgbRowPtr[rgbColIdxBytes + 0];
+            const uint8_t G1 = rgbRowPtr[rgbColIdxBytes + 1];
+            const uint8_t B1 = rgbRowPtr[rgbColIdxBytes + 2];
+            const uint8_t R2 = rgbRowPtr[rgbColIdxBytes + 3];
+            const uint8_t G2 = rgbRowPtr[rgbColIdxBytes + 4];
+            const uint8_t B2 = rgbRowPtr[rgbColIdxBytes + 5];
+
+            const int Y  =  (0.257f * R1) + (0.504f * G1) + (0.098f * B1) + 16.0f ;
+            const int U  = -(0.148f * R1) - (0.291f * G1) + (0.439f * B1) + 128.0f;
+            const int V  =  (0.439f * R1) - (0.368f * G1) - (0.071f * B1) + 128.0f;
+            const int Y2 =  (0.257f * R2) + (0.504f * G2) + (0.098f * B2) + 16.0f ;
+
+            yuvRowPtr[yuvColIdxBytes + 0] = cv::saturate_cast<uint8_t>(Y );
+            yuvRowPtr[yuvColIdxBytes + 1] = cv::saturate_cast<uint8_t>(U );
+            yuvRowPtr[yuvColIdxBytes + 2] = cv::saturate_cast<uint8_t>(Y2);
+            yuvRowPtr[yuvColIdxBytes + 3] = cv::saturate_cast<uint8_t>(V );
+        }
+    }
+}
 
 /**
  * @brief get_img
@@ -546,6 +640,24 @@ int8_t Camera::inference_capture_qbuf()
  */
 uint8_t* Camera::get_img()
 {
+    static int last_index = -1;
+    if (!adjust_img || last_index == buf_capture.index)
+        return buffer[buf_capture.index];
+
+    cv::Mat orig(in_height, in_width, CV_8UC2, buffer[buf_capture.index]);
+    cv::Mat origRgb;
+    cv::cvtColor(orig, origRgb, cv::COLOR_YUV2RGB_YUYV);
+
+    cv::Mat scaled;
+    cv::resize(origRgb, scaled, cv::Size(scale_width, scale_height));
+    auto cropped = scaled(crop_region);
+
+    cv::Mat final_out(out_height, out_width, CV_8UC2, buffer[buf_capture.index]);
+
+    rgb_to_yuv422_uyvy(cropped, final_out);
+
+    last_index = buf_capture.index;
+
     return buffer[buf_capture.index];
 }
 
@@ -562,59 +674,26 @@ int32_t Camera::get_size()
 
 
 /**
- * @brief get_w
- * @details Get camera_width. This function is currently NOT USED.
- * @return int32_t width of camera capture image.
- */
-int32_t Camera::get_w()
-{
-    return camera_width;
-}
-
-
-/**
  * @brief set_w
- * @details Set camera_width. This function is currently NOT USED.
+ * @details Set out_width. This function is currently NOT USED.
  * @param w new camera capture image width
  */
 void Camera::set_w(int32_t w)
 {
-    camera_width = w;
+    out_width = w;
     return;
-}
-
-
-/**
- * @brief get_h
- * @details Get camera_height. This function is currently NOT USED.
- * @return int32_t height of camera capture image.
- */
-int32_t Camera::get_h()
-{
-    return camera_height;
 }
 
 
 /**
  * @brief set_h
- * @details Set camera_height. This function is currently NOT USED.
+ * @details Set out_height. This function is currently NOT USED.
  * @param h new camera capture image height
  */
 void Camera::set_h(int32_t h)
 {
-    camera_height = h;
+    out_height = h;
     return;
-}
-
-
-/**
- * @brief get_c
- * @details Get camera_color. This function is currently NOT USED.
- * @return int32_t color channel of camera capture image.
- */
-int32_t Camera::get_c()
-{
-    return camera_color;
 }
 
 

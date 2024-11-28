@@ -25,6 +25,7 @@
 #ifndef CAMERA_H
 #define CAMERA_H
 
+#include <opencv2/opencv.hpp>
 #include <linux/videodev2.h>
 #include "define.h"
 
@@ -47,18 +48,23 @@ class Camera
 
         uint8_t * get_img();
         int32_t get_size();
-        int32_t get_w();
         void set_w(int32_t w);
-        int32_t get_h();
         void set_h(int32_t h);
-        int32_t get_c();
         void set_c(int32_t c);
         bool _using_inf;
 
     private:
+        bool adjust_img;
+        int32_t scale_width;
+        int32_t scale_height;
+        cv::Rect crop_region;
+
+        void read_native_resolutions();
         std::string device;
-        int32_t camera_width;
-        int32_t camera_height;
+        int32_t in_width;
+        int32_t in_height;
+        int32_t out_width;
+        int32_t out_height;
         int32_t camera_color;
         int8_t m_fd;
         int32_t imageLength;

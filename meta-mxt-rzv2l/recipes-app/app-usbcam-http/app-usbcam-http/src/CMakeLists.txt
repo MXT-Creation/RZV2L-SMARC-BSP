@@ -32,3 +32,7 @@ TARGET_LINK_LIBRARIES(sample_app_usbcam_http pthread)
 TARGET_LINK_LIBRARIES(sample_app_usbcam_http turbojpeg)
 TARGET_LINK_LIBRARIES(sample_app_usbcam_http jpeg)
 
+find_package(OpenCV REQUIRED)
+include_directories(${OpenCV_INCLUDE_DIRS})
+target_link_libraries(sample_app_usbcam_http ${OpenCV_LIBS})
+

@@ -1,11 +1,14 @@
 FILESEXTRAPATHS_prepend := "${THISDIR}/${PN}:"
 
 KERNEL_DEVICETREE = " \
+        renesas/r9a07g054l2-ov13850-smarc.dtb \
 	renesas/r9a07g054l2-mxt-smarc-ov5647.dtb \
 	renesas/r9a07g054l2-mxt-smarc-imx219.dtb \
 	renesas/r9a07g054l2-mxt-smarc-imx708.dtb \
 	renesas/r9a07g054l2-mxt-smarc-tevs.dtb \
 	renesas/r9a07g054l2-mxt-smarc.dtb \
+	renesas/r9a07g054l2-pivariety-smarc.dtb \
+	renesas/r9a07g054l2-imx135-smarc.dtb \
 "
 
 SRC_URI_append +=  "\
@@ -13,10 +16,7 @@ SRC_URI_append +=  "\
 	file://fragment-01-usb-ethernet.cfg \
 	file://fragment-02-wifi.cfg \
 	file://fragment-03-can.cfg \
-	file://fragment-04-ov5647.cfg \
-	file://fragment-05-imx219.cfg \
-	file://fragment-06-mscc-phy.cfg \
-	file://fragment-07-tevs.cfg \
+	file://fragment-04-camera-sensors.cfg \
 	file://patches/0002-media-ov5647-Add-support-for-PWDN-GPIO.patch \
 	file://patches/0003-media-ov5647-Add-support-for-non-continuous-clock-mo.patch \
 	file://patches/0004-media-ov5647-Add-set_fmt-and-get_fmt-calls.patch \
@@ -50,6 +50,9 @@ SRC_URI_append +=  "\
 	file://patches/1001-media-i2c-imx477-port-driver-from-RPi.patch \
 	file://patches/1002-rzv2l-add-support-for-imx708.patch \
 	file://patches/2001-drivers-media-i2c-tevs-backport-driver-from-TechNexi.patch \
+	file://patches/2002-media-i2c-backport-Arducam-Pivariety-64MP-camera-s-s.patch \
+	file://patches/2003-media-i2c-add-support-for-Sony-IMX135.patch \
+	file://patches/2004-media-i2c-ov13850-add-driver-for-OmniVision-OV13850.patch \
 "
 
 do_compile_prepend() {
@@ -59,5 +62,5 @@ do_compile_prepend() {
 do_install_append() {
 	# This way we get a booting system, even if the camera is not the same
 	install -m 0755 -d ${D}/boot
-	cp ${D}/boot/r9a07g054l2-mxt-smarc.dtb ${D}/boot/r9a07g054l2-smarc.dtb
+	cp ${D}/boot/r9a07g054l2-ov13850-smarc.dtb ${D}/boot/r9a07g054l2-smarc.dtb
 }

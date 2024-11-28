@@ -12,7 +12,7 @@ SRC_URI = "file://src/ \
 	   file://app-usbcam-http.service \
 "
 
-DEPENDS += " drpai libjpeg-turbo "
+DEPENDS += " drpai libjpeg-turbo opencv "
 
 RDEPENDS_${PN} += " drpai-models "
 

@@ -288,8 +288,7 @@ void* RecognizeBase::capture_thread(void* arg)
         if (0 == capture_addr)
         {
             fprintf(stderr, "[ERROR] Failed to _capture image from camera.\n");
-            me->send_app_message("Failed to _capture image from camera.\nRestart the application.");
-            break;
+            continue;
         }
         else
         {
@@ -336,8 +335,7 @@ void* RecognizeBase::capture_thread(void* arg)
         if (0 != ret)
         {
             fprintf(stderr, "[ERROR] Failed to enqueue _capture buffer.\n");
-            me->send_app_message("Failed to enqueue _capture buffer.\nRestart the application.");
-            break;
+            continue;
         }
     } /*End of Loop*/
 
