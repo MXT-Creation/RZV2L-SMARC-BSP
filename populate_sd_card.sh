@@ -61,9 +61,8 @@ untar_roofs() {
 	sudo tar -xf "$rootfs_img_file" -C "$dst"
 }
 
-populate_sd_card() {
+populate_sd_card_2parts() {
 	local devname="$1"
-	local PSUF
 	local TMP="/tmp"
 
 	local mount_dir1="${TMP}/mount_work1/"
@@ -71,10 +70,6 @@ populate_sd_card() {
 
 	mkdir -p ${mount_dir1}
 	mkdir -p ${mount_dir2}
-
-	if [[ $devname == /dev/mmcblk* ]] ; then
-		PSUF=p
-	fi
 
 	echo == Unmounting partitions first ==
 	sudo umount ${devname}${PSUF}1 &> /dev/null || true
@@ -101,6 +96,32 @@ populate_sd_card() {
 	echo "== Done... =="
 }
 
+populate_sd_card_1part() {
+	local devname="$1"
+	local TMP="/tmp"
+
+	local mount_dir1="${TMP}/mount_work1/"
+
+	mkdir -p ${mount_dir1}
+
+	echo == Unmounting partitions first ==
+	sudo umount ${devname}${PSUF}1 &> /dev/null || true
+
+	# Populate rootfs
+	echo "== Populating rootfs partition '${devname}${PSUF}1' =="
+	sudo mount ${devname}${PSUF}1 ${mount_dir1}
+	untar_roofs "${mount_dir1}"
+
+	echo "== Syncing... =="
+
+	sudo sync
+
+	echo == Unmounting partitions \(almost done\) ==
+	sudo umount ${devname}${PSUF}1
+
+	echo "== Done... =="
+}
+
 echo "=================================================================="
 echo "| WARNING! WARNING! WARNING! WARNING! WARNING! WARNING! WARNING! |"
 echo "|                                                                |"
@@ -111,4 +132,15 @@ echo "| WARNING! WARNING! WARNING! WARNING! WARNING! WARNING! WARNING! |"
 echo "=================================================================="
 read ans
 
-populate_sd_card "$1"
+devname="$1"
+if [[ $devname == /dev/mmcblk* ]] ; then
+	PSUF=p
+fi
+
+if [ -e  ${devname}${PSUF}2 ] ; then
+	echo "SD-card has 2 partitions; will populate 1 FAT + 1 rootfs"
+	populate_sd_card_2part "$1"
+else
+	echo "SD-card has 1 partition; will populate 1 rootfs"
+	populate_sd_card_1part "$1"
+fi
