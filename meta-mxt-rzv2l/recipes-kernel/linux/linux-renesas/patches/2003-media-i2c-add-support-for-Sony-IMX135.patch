@@ -171,7 +171,7 @@ index 000000000000..405bbc02aaae
 +#define IMX135_REG_EXPOSURE		0x0202
 +#define IMX135_EXPOSURE_MIN		4
 +#define IMX135_EXPOSURE_STEP		1
-+#define IMX135_EXPOSURE_DEFAULT		0x664
++#define IMX135_EXPOSURE_DEFAULT		0xCC8
 +#define IMX135_EXPOSURE_MAX		0xfffb
 +
 +/* Analog gain control */
@@ -834,7 +834,7 @@ index 000000000000..405bbc02aaae
 +	{
 +		.width = 1280,
 +		.height = 720,
-+		.vts_def = 4572,
++		.vts_def = 3004,
 +		.reg_list = {
 +			.num_of_regs = ARRAY_SIZE(mode_1280_720_video_regs),
 +			.regs = mode_1280_720_video_regs,
@@ -843,7 +843,7 @@ index 000000000000..405bbc02aaae
 +	{
 +		.width = 1920,
 +		.height = 1080,
-+		.vts_def = 9144,
++		.vts_def = 1400,
 +		.reg_list = {
 +			.num_of_regs = ARRAY_SIZE(mode_1920_1080_video_regs),
 +			.regs = mode_1920_1080_video_regs,
