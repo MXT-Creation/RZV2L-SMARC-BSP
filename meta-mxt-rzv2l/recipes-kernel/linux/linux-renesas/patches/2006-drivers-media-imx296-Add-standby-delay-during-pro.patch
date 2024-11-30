@@ -1,0 +1,56 @@
+From 7713ce38e6a26425ace3a57b3d03ba0125c16f89 Mon Sep 17 00:00:00 2001
+From: Naushir Patuck <naush@raspberrypi.com>
+Date: Fri, 28 Jul 2023 12:00:40 +0100
+Subject: [PATCH v2] drivers: media: imx296: Add standby delay during probe
+
+Add a 2-5ms delay when coming out of standby and before reading the
+sensor info register durning probe, as instructed by the datasheet. This
+standby delay is already present when the sensor starts streaming.
+
+During a cold-boot, reading the IMX296_SENSOR_INFO register would often
+return a value of 0x0000, if this delay is not present before.
+
+Fixes: cb33db2b6ccfe ("media: i2c: IMX296 camera sensor driver")
+Tested-by: Alexandru Ardelean <aardelean@baylibre.com>
+Signed-off-by: Naushir Patuck <naush@raspberrypi.com>
+---
+
+Changelog v1 -> v2:
+* https://lore.kernel.org/linux-media/20241115142021.574402-1-aardelean@baylibre.com/
+* Technically, this is not a true V2, but rather a new patch
+  - But in V1, the attempt was to fix an issue found with the upstream
+    IMX296 driver, which was pointed out by Kieran that it was already
+    fixed (more elegantly) in the RPi tree.
+  - The standby delay helps during a cold-boot so that the driver can read
+    the IMX296_SENSOR_INFO register. If the delay isn't present the value
+    read is 0xx0000.
+  - Original patch can be found:
+    https://github.com/raspberrypi/linux/commit/7713ce38e6a26425ace3a57b3d03ba0125c16f89
+  - From the original patch of Naushir Patuck,
+    - Added comment 
+      -------
+      During a cold-boot, reading the IMX296_SENSOR_INFO register would often 
+      return a value of 0x0000, if this delay is not present before.
+      -------
+    - Added 'Tested-by: Alexandru Ardelean <aardelean@baylibre.com>
+    - Added 'Fixes: cb33db2b6ccfe ("media: i2c: IMX296 camera sensor driver")'
+
+ drivers/media/i2c/imx296.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/media/i2c/imx296.c b/drivers/media/i2c/imx296.c
+index f942f66fa664..395bfe4fb23d 100644
+--- a/drivers/media/i2c/imx296.c
++++ b/drivers/media/i2c/imx296.c
+@@ -940,6 +940,8 @@ static int imx296_identify_model(struct imx296 *sensor)
+ 		return ret;
+ 	}
+ 
++	usleep_range(2000, 5000);
++
+ 	ret = imx296_read(sensor, IMX296_SENSOR_INFO);
+ 	if (ret < 0) {
+ 		dev_err(sensor->dev, "failed to read sensor information (%d)\n",
+-- 
+2.46.1
+

@@ -53,7 +53,9 @@ SRC_URI_append +=  "\
 	file://patches/2001-drivers-media-i2c-tevs-backport-driver-from-TechNexi.patch \
 	file://patches/2002-media-i2c-backport-Arducam-Pivariety-64MP-camera-s-s.patch \
 	file://patches/2003-media-i2c-add-support-for-Sony-IMX135.patch \
-	file://patches/2004-media-i2c-ov13850-add-driver-for-OmniVision-OV13850.patch \
+	file://patches/2004-media-i2c-IMX296-camera-sensor-driver.patch \
+	file://patches/2006-drivers-media-imx296-Add-standby-delay-during-pro.patch \
+	file://patches/2008-media-i2c-ov13850-add-driver-for-OmniVision-OV13850.patch \
 "
 
 do_compile_prepend() {
