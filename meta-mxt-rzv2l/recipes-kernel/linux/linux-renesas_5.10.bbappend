@@ -7,7 +7,6 @@ KERNEL_DEVICETREE = " \
 	renesas/r9a07g054l2-imx135-smarc.dtb \
 	renesas/r9a07g054l2-imx219-smarc.dtb \
 	renesas/r9a07g054l2-imx296-smarc.dtb \
-	renesas/r9a07g054l2-imx477-smarc.dtb \
 	renesas/r9a07g054l2-imx708-smarc.dtb \
 	renesas/r9a07g054l2-ov13850-smarc.dtb \
 	renesas/r9a07g054l2-ov5647-smarc.dtb \
