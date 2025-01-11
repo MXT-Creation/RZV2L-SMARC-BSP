@@ -1,0 +1,179 @@
+From 8916fb7a825c22eb5bca2f766b1850c27d4a16d0 Mon Sep 17 00:00:00 2001
+From: Alexandru Ardelean <alex@shruggie.ro>
+Date: Tue, 31 Dec 2024 19:23:25 +0200
+Subject: [PATCH] media: i2c: imx274: fix cropping during binning
+
+Signed-off-by: Alexandru Ardelean <alex@shruggie.ro>
+---
+ drivers/media/i2c/imx274.c | 56 ++++++++++++++++++++++----------------
+ 1 file changed, 33 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/media/i2c/imx274.c b/drivers/media/i2c/imx274.c
+index c4c6f5c4f..5e7ba720c 100644
+--- a/drivers/media/i2c/imx274.c
++++ b/drivers/media/i2c/imx274.c
+@@ -1045,17 +1045,14 @@ static int __imx274_change_compose(struct stimx274 *imx274,
+ 				   u32 flags)
+ {
+ 	struct device *dev = &imx274->client->dev;
+-	const struct v4l2_rect *cur_crop;
+ 	struct v4l2_mbus_framefmt *tgt_fmt;
+ 	unsigned int i;
+ 	const struct imx274_mode *best_mode = &imx274_modes[0];
+ 	int best_goodness = INT_MIN;
+ 
+ 	if (which == V4L2_SUBDEV_FORMAT_TRY) {
+-		cur_crop = &cfg->try_crop;
+ 		tgt_fmt = &cfg->try_fmt;
+ 	} else {
+-		cur_crop = &imx274->crop;
+ 		tgt_fmt = &imx274->format;
+ 	}
+ 
+@@ -1065,8 +1062,8 @@ static int __imx274_change_compose(struct stimx274 *imx274,
+ 
+ 		int goodness = imx274_binning_goodness(
+ 			imx274,
+-			cur_crop->width / wratio, *width,
+-			cur_crop->height / hratio, *height,
++			IMX274_MAX_WIDTH / wratio, *width,
++			IMX274_MAX_HEIGHT / hratio, *height,
+ 			flags);
+ 
+ 		if (goodness >= best_goodness) {
+@@ -1075,8 +1072,8 @@ static int __imx274_change_compose(struct stimx274 *imx274,
+ 		}
+ 	}
+ 
+-	*width = cur_crop->width / best_mode->wbin_ratio;
+-	*height = cur_crop->height / best_mode->hbin_ratio;
++	*width = IMX274_MAX_WIDTH / best_mode->wbin_ratio;
++	*height = IMX274_MAX_HEIGHT / best_mode->hbin_ratio;
+ 
+ 	if (which == V4L2_SUBDEV_FORMAT_ACTIVE)
+ 		imx274->mode = best_mode;
+@@ -1128,6 +1125,7 @@ static int imx274_set_fmt(struct v4l2_subdev *sd,
+ 			  struct v4l2_subdev_format *format)
+ {
+ 	struct v4l2_mbus_framefmt *fmt = &format->format;
++	struct v4l2_rect *crop;
+ 	struct stimx274 *imx274 = to_imx274(sd);
+ 	int err = 0;
+ 
+@@ -1145,10 +1143,19 @@ static int imx274_set_fmt(struct v4l2_subdev *sd,
+ 	 * values, so do a full copy here
+ 	 */
+ 	fmt->field = V4L2_FIELD_NONE;
+-	if (format->which == V4L2_SUBDEV_FORMAT_TRY)
++	if (format->which == V4L2_SUBDEV_FORMAT_TRY) {
+ 		cfg->try_fmt = *fmt;
+-	else
++		crop = &cfg->try_crop;
++	} else {
+ 		imx274->format = *fmt;
++		crop = &imx274->crop;
++	}
++
++	/* Update cropping to format bounds */
++	crop->left = 0;
++	crop->top = 0;
++	crop->width = fmt->width;
++	crop->height = fmt->height;
+ 
+ out:
+ 	mutex_unlock(&imx274->lock);
+@@ -1171,8 +1178,8 @@ static int imx274_get_selection(struct v4l2_subdev *sd,
+ 	if (sel->target == V4L2_SEL_TGT_CROP_BOUNDS) {
+ 		sel->r.left = 0;
+ 		sel->r.top = 0;
+-		sel->r.width = IMX274_MAX_WIDTH;
+-		sel->r.height = IMX274_MAX_HEIGHT;
++		sel->r.width = IMX274_MAX_WIDTH / imx274->mode->wbin_ratio;
++		sel->r.height = IMX274_MAX_HEIGHT / imx274->mode->hbin_ratio;
+ 		return 0;
+ 	}
+ 
+@@ -1218,6 +1225,8 @@ static int imx274_set_selection_crop(struct stimx274 *imx274,
+ 	struct v4l2_rect *tgt_crop;
+ 	struct v4l2_rect new_crop;
+ 	bool size_changed;
++	const u32 max_width = IMX274_MAX_WIDTH / imx274->mode->wbin_ratio;
++	const u32 max_height = IMX274_MAX_HEIGHT / imx274->mode->hbin_ratio;
+ 
+ 	/*
+ 	 * h_step could be 12 or 24 depending on the binning. But we
+@@ -1229,7 +1238,7 @@ static int imx274_set_selection_crop(struct stimx274 *imx274,
+ 
+ 	new_crop.width = min_t(u32,
+ 			       IMX274_ROUND(sel->r.width, h_step, sel->flags),
+-			       IMX274_MAX_WIDTH);
++			       max_width);
+ 
+ 	/* Constraint: HTRIMMING_END - HTRIMMING_START >= 144 */
+ 	if (new_crop.width < 144)
+@@ -1237,14 +1246,14 @@ static int imx274_set_selection_crop(struct stimx274 *imx274,
+ 
+ 	new_crop.left = min_t(u32,
+ 			      IMX274_ROUND(sel->r.left, h_step, 0),
+-			      IMX274_MAX_WIDTH - new_crop.width);
++			      max_width - new_crop.width);
+ 
+ 	new_crop.height = min_t(u32,
+ 				IMX274_ROUND(sel->r.height, 2, sel->flags),
+-				IMX274_MAX_HEIGHT);
++				max_height);
+ 
+ 	new_crop.top = min_t(u32, IMX274_ROUND(sel->r.top, 2, 0),
+-			     IMX274_MAX_HEIGHT - new_crop.height);
++			     max_height - new_crop.height);
+ 
+ 	sel->r = new_crop;
+ 
+@@ -1310,6 +1319,7 @@ static int imx274_set_selection(struct v4l2_subdev *sd,
+ 
+ static int imx274_apply_trimming(struct stimx274 *imx274)
+ {
++	const u32 max_height = IMX274_MAX_HEIGHT / imx274->mode->hbin_ratio;
+ 	u32 h_start;
+ 	u32 h_end;
+ 	u32 hmax;
+@@ -1319,8 +1329,8 @@ static int imx274_apply_trimming(struct stimx274 *imx274)
+ 	u32 y_out_size;
+ 	int err;
+ 
+-	h_start = imx274->crop.left + 12;
+-	h_end = h_start + imx274->crop.width;
++	h_start = imx274->crop.left * 2 + 12;
++	h_end = h_start + imx274->crop.width * 2;
+ 
+ 	/* Use the minimum allowed value of HMAX */
+ 	/* Note: except in mode 1, (width / 16 + 23) is always < hmax_min */
+@@ -1329,8 +1339,8 @@ static int imx274_apply_trimming(struct stimx274 *imx274)
+ 
+ 	/* invert v_pos if VFLIP */
+ 	v_pos = imx274->ctrls.vflip->cur.val ?
+-		(-imx274->crop.top / 2) : (imx274->crop.top / 2);
+-	v_cut = (IMX274_MAX_HEIGHT - imx274->crop.height) / 2;
++		-imx274->crop.top : imx274->crop.top;
++	v_cut = max_height - imx274->crop.height;
+ 	write_v_size = imx274->crop.height + 22;
+ 	y_out_size   = imx274->crop.height;
+ 
+@@ -2117,10 +2127,10 @@ static int imx274_probe(struct i2c_client *client)
+ 
+ 	/* initialize format */
+ 	imx274->mode = &imx274_modes[0];
+-	imx274->crop.width = IMX274_MAX_WIDTH;
+-	imx274->crop.height = IMX274_MAX_HEIGHT;
+-	imx274->format.width = imx274->crop.width / imx274->mode->wbin_ratio;
+-	imx274->format.height = imx274->crop.height / imx274->mode->hbin_ratio;
++	imx274->format.width = IMX274_MAX_WIDTH / imx274->mode->wbin_ratio;
++	imx274->format.height = IMX274_MAX_HEIGHT / imx274->mode->hbin_ratio;
++	imx274->crop.width = imx274->format.width;
++	imx274->crop.height = imx274->format.height;
+ 	imx274->format.field = V4L2_FIELD_NONE;
+ 	imx274->format.code = MEDIA_BUS_FMT_SRGGB10_1X10;
+ 	imx274->format.colorspace = V4L2_COLORSPACE_SRGB;
+-- 
+2.47.1
+

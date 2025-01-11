@@ -1,0 +1,71 @@
+From d1d67d23d2970ae184cdbbe7f90e46246877f47b Mon Sep 17 00:00:00 2001
+From: Alexandru Ardelean <alex@shruggie.ro>
+Date: Wed, 18 Dec 2024 06:42:26 +0200
+Subject: [PATCH 09/12] media: i2c: imx274: add pixel_rate v4l2 control
+
+Some Camera Receive Units need a V4L2_CID_PIXEL_RATE control to be able to
+compute the pixel data-rate when pulling pixels from the sensor.
+
+This sensor doesn't implement one yet. This change adds a pixel-rate values
+which is taken into consideration against an INCK rate of 24 Mhz (which
+seems to be more common value).
+
+The sensor should (now) also print a warning at power-on, in case the INCK
+rate isn't 24 Mhz.
+
+Signed-off-by: Alexandru Ardelean <alex@shruggie.ro>
+---
+ drivers/media/i2c/imx274.c | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/i2c/imx274.c b/drivers/media/i2c/imx274.c
+index a22d9bcce..c4efbbb0c 100644
+--- a/drivers/media/i2c/imx274.c
++++ b/drivers/media/i2c/imx274.c
+@@ -45,6 +45,11 @@
+  */
+ #define IMX274_INCK_DEFAULT_FREQ		(24000000)
+ 
++/*
++ * Pixel rate value for INCK clock at 24 Mhz
++ */
++#define IMX274_PIXEL_RATE_DEFAULT		(288000000)
++
+ /*
+  * The input gain is shifted by IMX274_GAIN_SHIFT to get
+  * decimal number. The real gain is
+@@ -549,6 +554,7 @@ struct imx274_ctrls {
+ 	struct v4l2_ctrl *gain;
+ 	struct v4l2_ctrl *vflip;
+ 	struct v4l2_ctrl *test_pattern;
++	struct v4l2_ctrl *pixel_rate;
+ };
+ 
+ /*
+@@ -2007,7 +2013,7 @@ static int imx274_init_controls(struct stimx274 *imx274)
+ 	struct device *dev = &imx274->client->dev;
+ 	int ret;
+ 
+-	ret = v4l2_ctrl_handler_init(&imx274->ctrls.handler, 4);
++	ret = v4l2_ctrl_handler_init(&imx274->ctrls.handler, 5);
+ 	if (ret < 0) {
+ 		dev_err(dev, "%s: ctrl handler init failed: %d\n", __func__, ret);
+ 		return ret;
+@@ -2040,6 +2046,14 @@ static int imx274_init_controls(struct stimx274 *imx274)
+ 		&imx274_ctrl_ops,
+ 		V4L2_CID_VFLIP, 0, 1, 1, 0);
+ 
++	imx274->ctrls.pixel_rate = v4l2_ctrl_new_std(
++		&imx274->ctrls.handler,
++		&imx274_ctrl_ops,
++		V4L2_CID_PIXEL_RATE,
++		IMX274_PIXEL_RATE_DEFAULT,
++		IMX274_PIXEL_RATE_DEFAULT, 1,
++		IMX274_PIXEL_RATE_DEFAULT);
++
+ 	imx274->sd.ctrl_handler = &imx274->ctrls.handler;
+ 	if (imx274->ctrls.handler.error) {
+ 		ret = imx274->ctrls.handler.error;
+-- 
+2.47.1
+

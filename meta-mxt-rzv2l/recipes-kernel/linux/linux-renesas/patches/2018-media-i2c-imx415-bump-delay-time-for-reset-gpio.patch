@@ -1,0 +1,25 @@
+From 51c38fdb15bb6350692dce8b02dfa166679c0f31 Mon Sep 17 00:00:00 2001
+From: Alexandru Ardelean <alex@shruggie.ro>
+Date: Tue, 31 Dec 2024 10:01:49 +0200
+Subject: [PATCH 15/15] media: i2c: imx415: bump delay time for reset gpio
+
+---
+ drivers/media/i2c/imx415.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/media/i2c/imx415.c b/drivers/media/i2c/imx415.c
+index 588cd80b5..126ef062d 100644
+--- a/drivers/media/i2c/imx415.c
++++ b/drivers/media/i2c/imx415.c
+@@ -1246,7 +1246,7 @@ static int imx415_power_on(struct imx415 *sensor)
+ 	 * but this doesn't work in all cases. Use 100 us to be on the safe
+ 	 * side.
+ 	 */
+-	usleep_range(100, 200);
++	usleep_range(10000, 20000);
+ 
+ 	return 0;
+ 
+-- 
+2.47.1
+

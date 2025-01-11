@@ -1,0 +1,47 @@
+From c72331fc1d4f7c73d3849e7d38b24a2fadd751f2 Mon Sep 17 00:00:00 2001
+From: Alexandru Ardelean <alex@shruggie.ro>
+Date: Wed, 18 Dec 2024 07:02:38 +0200
+Subject: [PATCH 10/12] media: i2c: imx274: try to talk with the sensor during
+ probe
+
+Commit ad97bc37426c1 ("media: i2c: imx274: Add IMX274 power on and off
+sequence") removed a neat functionality of this driver, which is to try to
+talk to the sensor at probe time.
+This was done by calling v4l2_ctrl_handler_setup() at probe time, which
+doesn't seem like a good idea.
+
+After this change, the sensor can probe successfully, even if it's not
+found on the I2C bus. For single-sensor setups, this isn't too problematic.
+It's a little more annoying in reference designs with multi-camera boards,
+where the sensor can be placed in any of the 2+ CSI connectors (because it
+is defined multiple times in the DT).
+
+As such, this change wouldn't necessarily be qualified as a fix, as
+(normally) the DT would define the final/fixed placement of each sensor in
+a production-ready multi-camera board.
+
+Signed-off-by: Alexandru Ardelean <alex@shruggie.ro>
+---
+ drivers/media/i2c/imx274.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/media/i2c/imx274.c b/drivers/media/i2c/imx274.c
+index c4efbbb0c..3950aec0e 100644
+--- a/drivers/media/i2c/imx274.c
++++ b/drivers/media/i2c/imx274.c
+@@ -2145,6 +2145,12 @@ static int imx274_probe(struct i2c_client *client)
+ 		goto err_me;
+ 	}
+ 
++	ret = imx274_set_test_pattern(imx274, TEST_PATTERN_DISABLED);
++	if (ret < 0) {
++		dev_err(dev, "%s : could not communicate with sensor\n", __func__);
++		goto err_power_off;
++	}
++
+ 	/* initialize controls */
+ 	ret = imx274_init_controls(imx274);
+ 	if (ret < 0)
+-- 
+2.47.1
+

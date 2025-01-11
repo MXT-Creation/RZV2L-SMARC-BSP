@@ -1,0 +1,92 @@
+From 94e6b65506e132beaef922ba203944a58748b7f7 Mon Sep 17 00:00:00 2001
+From: Alexandru Ardelean <alex@shruggie.ro>
+Date: Wed, 18 Dec 2024 08:21:54 +0200
+Subject: [PATCH 11/12] media: i2c: imx274: add support for 2 lane
+ configuration
+
+IMX274 also supports 2 lane mode.
+This patch adds support in the driver.
+
+Signed-off-by: Alexandru Ardelean <alex@shruggie.ro>
+---
+ drivers/media/i2c/imx274.c | 29 ++++++++++++++++++++++++++---
+ 1 file changed, 26 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/i2c/imx274.c b/drivers/media/i2c/imx274.c
+index 3950aec0e..c4c6f5c4f 100644
+--- a/drivers/media/i2c/imx274.c
++++ b/drivers/media/i2c/imx274.c
+@@ -444,6 +444,16 @@ static const struct reg_8 imx274_start_1[] = {
+ 	{IMX274_TABLE_END, 0x00}
+ };
+ 
++/*
++ * imx274 configuration for 2 lanes, default is 4
++ */
++static const struct reg_8 imx274_2_lane_conf[] = {
++	{0x312E, 0x01},
++	{0x3AA2, 0x01},
++
++	{IMX274_TABLE_END, 0x00}
++};
++
+ /*
+  * imx274 second step register configuration for
+  * starting stream
+@@ -588,6 +598,7 @@ struct stimx274 {
+ 	struct regulator_bulk_data supplies[IMX274_NUM_SUPPLIES];
+ 	struct clk *inck;
+ 	struct mutex lock; /* mutex lock for operations */
++	const struct reg_8 *lane_conf_regs;
+ 	const struct imx274_mode *mode;
+ };
+ 
+@@ -784,6 +795,12 @@ static int imx274_mode_regs(struct stimx274 *priv)
+ 	if (err)
+ 		return err;
+ 
++	if (priv->lane_conf_regs) {
++		err = imx274_write_table(priv, priv->lane_conf_regs);
++		if (err)
++			return err;
++	}
++
+ 	err = imx274_write_table(priv, priv->mode->init_regs);
+ 
+ 	return err;
+@@ -1973,7 +1990,7 @@ static const struct i2c_device_id imx274_id[] = {
+ };
+ MODULE_DEVICE_TABLE(i2c, imx274_id);
+ 
+-static int imx274_fwnode_parse(struct device *dev)
++static int imx274_fwnode_parse(struct device *dev, struct stimx274 *imx274)
+ {
+ 	struct fwnode_handle *endpoint;
+ 	/* Only CSI2 is supported */
+@@ -1999,7 +2016,13 @@ static int imx274_fwnode_parse(struct device *dev)
+ 	}
+ 
+ 	/* Check number of data lanes, only 4 lanes supported */
+-	if (ep.bus.mipi_csi2.num_data_lanes != 4) {
++	switch (ep.bus.mipi_csi2.num_data_lanes) {
++	case 2:
++		imx274->lane_conf_regs = imx274_2_lane_conf;
++		fallthrough;
++	case 4:
++		break;
++	default:
+ 		dev_err(dev, "Invalid data lanes: %d\n",
+ 			ep.bus.mipi_csi2.num_data_lanes);
+ 		return -EINVAL;
+@@ -2078,7 +2101,7 @@ static int imx274_probe(struct i2c_client *client)
+ 
+ 	mutex_init(&imx274->lock);
+ 
+-	ret = imx274_fwnode_parse(dev);
++	ret = imx274_fwnode_parse(dev, imx274);
+ 	if (ret)
+ 		return ret;
+ 
+-- 
+2.47.1
+

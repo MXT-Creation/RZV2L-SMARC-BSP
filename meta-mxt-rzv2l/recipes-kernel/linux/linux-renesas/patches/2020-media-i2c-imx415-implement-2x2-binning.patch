@@ -1,0 +1,171 @@
+From 67752dc2f75c3d9c49c1e619626f3a8777ca28ff Mon Sep 17 00:00:00 2001
+From: Alexandru Ardelean <alex@shruggie.ro>
+Date: Fri, 10 Jan 2025 18:54:34 +0200
+Subject: [PATCH] media: i2c: imx415: implement 2x2 binning
+
+Signed-off-by: Alexandru Ardelean <alex@shruggie.ro>
+---
+ drivers/media/i2c/imx415.c | 91 +++++++++++++++++++++++++++++++++-----
+ 1 file changed, 80 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/media/i2c/imx415.c b/drivers/media/i2c/imx415.c
+index c0e0925fc657..1e863632d2d3 100644
+--- a/drivers/media/i2c/imx415.c
++++ b/drivers/media/i2c/imx415.c
+@@ -51,7 +51,11 @@
+ #define IMX415_WINMODE		  IMX415_REG_8BIT(0x301C)
+ #define IMX415_WINMODE_ALL_PIXEL_AREA	0
+ #define IMX415_WINMODE_CROPPING		4
++#define IMX415_HADD		  IMX415_REG_8BIT(0x3020)
++#define IMX415_VADD		  IMX415_REG_8BIT(0x3021)
+ #define IMX415_ADDMODE		  IMX415_REG_8BIT(0x3022)
++#define IMX415_DIG_CLP_VSTART	  IMX415_REG_8BIT(0x30D9)
++#define IMX415_DIG_CLP_VNUM	  IMX415_REG_8BIT(0x30DA)
+ #define IMX415_REVERSE		  IMX415_REG_8BIT(0x3030)
+ #define IMX415_HREVERSE_SHIFT	  (0)
+ #define IMX415_VREVERSE_SHIFT	  BIT(0)
+@@ -517,6 +521,25 @@ struct imx415_mode_reg_list {
+ 	const struct imx415_reg *regs;
+ };
+ 
++struct imx415_frame_size {
++	u32 width;
++	u32 height;
++	bool binning;
++};
++
++static const struct imx415_frame_size supported_frame_sizes[] = {
++	{
++		.width = IMX415_PIXEL_ARRAY_WIDTH,
++		.height = IMX415_PIXEL_ARRAY_HEIGHT,
++		.binning = false,
++	},
++	{
++		.width = IMX415_PIXEL_ARRAY_WIDTH / 2,
++		.height = IMX415_PIXEL_ARRAY_HEIGHT / 2,
++		.binning = true,
++	},
++};
++
+ /*
+  * Mode : number of lanes, lane rate and frame rate dependent settings
+  *
+@@ -615,6 +638,7 @@ struct imx415 {
+ 	struct gpio_desc *reset;
+ 	struct regmap *regmap;
+ 
++	const struct imx415_frame_size *frame_size;
+ 	const struct imx415_clk_params *clk_params;
+ 
+ 	struct v4l2_rect crop;
+@@ -977,10 +1001,30 @@ static int imx415_set_mode(struct imx415 *sensor, int mode)
+ 	return 0;
+ }
+ 
++static int imx415_set_binning(struct imx415 *sensor)
++{
++	int ret;
++
++	if (!sensor->frame_size->binning)
++		return 0;
++
++	/* Currently, only support 2x2 binning */
++	ret = imx415_write(sensor, IMX415_WINMODE, 0x00);
++	ret |= imx415_write(sensor, IMX415_HADD, 0x01);
++	ret |= imx415_write(sensor, IMX415_VADD, 0x01);
++	ret |= imx415_write(sensor, IMX415_ADDMODE, 0x01);
++
++	ret |= imx415_write(sensor, IMX415_DIG_CLP_VSTART, 0x02);
++	ret |= imx415_write(sensor, IMX415_DIG_CLP_VNUM, 0x01);
++
++	return ret;
++}
++
+ static int imx415_setup(struct imx415 *sensor)
+ {
+ 	const struct v4l2_rect *crop;
+ 	unsigned int i;
++	u32 ratio;
+ 	int ret;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(imx415_init_table); ++i) {
+@@ -996,14 +1040,22 @@ static int imx415_setup(struct imx415 *sensor)
+ 	if (ret)
+ 		return ret;
+ 
+-	if (crop->width != IMX415_PIXEL_ARRAY_WIDTH ||
+-	    crop->height != IMX415_PIXEL_ARRAY_HEIGHT) {
+-		ret = imx415_write(sensor, IMX415_PIX_HST, crop->left);
+-		ret |= imx415_write(sensor, IMX415_PIX_VST, crop->top * 2);
+-		ret |= imx415_write(sensor, IMX415_PIX_HWIDTH, crop->width);
+-		ret |= imx415_write(sensor, IMX415_PIX_VWIDTH, crop->height * 2);
+-		ret |= imx415_write(sensor, IMX415_WINMODE, IMX415_WINMODE_CROPPING);
+-	}
++	ret = imx415_set_binning(sensor);
++	if (ret)
++		return ret;
++
++	/* If binning, we need to apply these to the sizes before binning */
++	if (sensor->frame_size->binning)
++		ratio = 2;
++	else
++		ratio = 1;
++
++	ret = imx415_write(sensor, IMX415_PIX_HST, crop->left * ratio);
++	ret |= imx415_write(sensor, IMX415_PIX_VST, crop->top * 2 * ratio);
++	ret |= imx415_write(sensor, IMX415_PIX_HWIDTH, crop->width * ratio);
++	ret |= imx415_write(sensor, IMX415_PIX_VWIDTH,
++			 (crop->height - 1) * 2 * ratio);
++	ret |= imx415_write(sensor, IMX415_WINMODE, IMX415_WINMODE_CROPPING);
+ 
+ 	return ret;
+ }
+@@ -1123,12 +1175,12 @@ static int imx415_enum_frame_size(struct v4l2_subdev *sd,
+ 				  struct v4l2_subdev_pad_config *cfg,
+ 				  struct v4l2_subdev_frame_size_enum *fse)
+ {
+-	if (fse->index > 0 || fse->code != MEDIA_BUS_FMT_SGBRG10_1X10)
++	if (fse->index > 1 || fse->code != MEDIA_BUS_FMT_SGBRG10_1X10)
+ 		return -EINVAL;
+ 
+-	fse->min_width = IMX415_PIXEL_ARRAY_WIDTH;
++	fse->min_width = supported_frame_sizes[fse->index].width;
+ 	fse->max_width = fse->min_width;
+-	fse->min_height = IMX415_PIXEL_ARRAY_HEIGHT;
++	fse->min_height = supported_frame_sizes[fse->index].height;
+ 	fse->max_height = fse->min_height;
+ 	return 0;
+ }
+@@ -1150,8 +1202,18 @@ static int imx415_set_format(struct v4l2_subdev *sd,
+ 			     struct v4l2_subdev_pad_config *cfg,
+ 			     struct v4l2_subdev_format *fmt)
+ {
++	struct v4l2_rect *crop;
+ 	struct imx415 *sensor = to_imx415(sd);
+ 	struct v4l2_mbus_framefmt *format;
++	const struct imx415_frame_size *frame_size;
++
++	frame_size = v4l2_find_nearest_size(supported_frame_sizes,
++					    ARRAY_SIZE(supported_frame_sizes),
++					    width, height,
++					    fmt->format.width,
++					    fmt->format.height);
++
++	sensor->frame_size = frame_size;
+ 
+ 	format = __imx415_get_pad_format(sensor, cfg, fmt);
+ 
+@@ -1165,6 +1227,13 @@ static int imx415_set_format(struct v4l2_subdev *sd,
+ 	format->xfer_func = V4L2_XFER_FUNC_NONE;
+ 
+ 	fmt->format = *format;
++
++	crop = &sensor->crop;
++	crop->top = 0;
++	crop->left = 0;
++	crop->width = fmt->format.width;
++	crop->height = fmt->format.height;
++
+ 	return 0;
+ }
+ 

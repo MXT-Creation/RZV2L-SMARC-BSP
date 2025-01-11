@@ -1,0 +1,54 @@
+From 68b33ca5e313f38b06cb5f1ddcbe3211145fefe0 Mon Sep 17 00:00:00 2001
+From: Alexandru Ardelean <alex@shruggie.ro>
+Date: Wed, 18 Dec 2024 06:53:27 +0200
+Subject: [PATCH 08/12] media: i2c: imx274: add warn message in case INCK rate
+ is not 24 Mhz
+
+Most use-cases with the IMX274 seem to be with using a 24 Mhz clock.
+In case the clock isn't at 24 Mhz, print a warning at power-on.
+
+Returning an error is not ideal, as it becomes a breaking change, and this
+driver was used without checking or caring about the INCK rate.
+
+Signed-off-by: Alexandru Ardelean <alex@shruggie.ro>
+---
+ drivers/media/i2c/imx274.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/drivers/media/i2c/imx274.c b/drivers/media/i2c/imx274.c
+index 4ded481fe..a22d9bcce 100644
+--- a/drivers/media/i2c/imx274.c
++++ b/drivers/media/i2c/imx274.c
+@@ -40,6 +40,11 @@
+ #define IMX274_PIXCLK_CONST1			(72000000)
+ #define IMX274_PIXCLK_CONST2			(1000000)
+ 
++/*
++ * The default frequency used for this sensor
++ */
++#define IMX274_INCK_DEFAULT_FREQ		(24000000)
++
+ /*
+  * The input gain is shifted by IMX274_GAIN_SHIFT to get
+  * decimal number. The real gain is
+@@ -840,11 +845,17 @@ static int imx274_power_on(struct device *dev)
+ 	struct i2c_client *client = to_i2c_client(dev);
+ 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+ 	struct stimx274 *imx274 = to_imx274(sd);
++	unsigned long inck_rate;
+ 	int ret;
+ 
+ 	/* keep sensor in reset before power on */
+ 	imx274_reset(imx274, 0);
+ 
++	inck_rate = clk_get_rate(imx274->inck);
++	if (inck_rate && inck_rate != IMX274_INCK_DEFAULT_FREQ)
++		dev_warn(&imx274->client->dev,
++			 "Unsupported INCK clock frequency %lu\n", inck_rate);
++
+ 	ret = clk_prepare_enable(imx274->inck);
+ 	if (ret) {
+ 		dev_err(&imx274->client->dev,
+-- 
+2.47.1
+

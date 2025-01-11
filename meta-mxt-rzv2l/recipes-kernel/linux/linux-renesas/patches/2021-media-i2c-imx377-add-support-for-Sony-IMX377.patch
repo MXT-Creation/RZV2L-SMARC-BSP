@@ -1,0 +1,1427 @@
+From e029562a3fde9bc686ac81b0400aa6d96ffe21a0 Mon Sep 17 00:00:00 2001
+From: Alexandru Ardelean <alex@shruggie.ro>
+Date: Sat, 11 Jan 2025 10:52:48 +0200
+Subject: [PATCH] media: i2c: imx377: add support for Sony IMX377
+
+---
+ drivers/media/i2c/Kconfig  |   12 +
+ drivers/media/i2c/Makefile |    1 +
+ drivers/media/i2c/imx377.c | 1374 ++++++++++++++++++++++++++++++++++++
+ 3 files changed, 1387 insertions(+)
+ create mode 100644 drivers/media/i2c/imx377.c
+
+diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
+index 074ca7b6bde1..003bd95bb33e 100644
+--- a/drivers/media/i2c/Kconfig
++++ b/drivers/media/i2c/Kconfig
+@@ -813,6 +813,18 @@ config VIDEO_IMX319
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called imx319.
+ 
++config VIDEO_IMX377
++	tristate "Sony IMX377 sensor support"
++	depends on I2C && VIDEO_V4L2
++	select MEDIA_CONTROLLER
++	select VIDEO_V4L2_SUBDEV_API
++	help
++	  This is a Video4Linux2 sensor driver for the Sony
++	  IMX377 camera.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called imx377.
++
+ config VIDEO_IMX355
+ 	tristate "Sony IMX355 sensor support"
+ 	depends on I2C && VIDEO_V4L2
+diff --git a/drivers/media/i2c/Makefile b/drivers/media/i2c/Makefile
+index 9b4630e969c2..3ffd4be1c4bd 100644
+--- a/drivers/media/i2c/Makefile
++++ b/drivers/media/i2c/Makefile
+@@ -113,6 +113,7 @@ obj-$(CONFIG_VIDEO_OV2659)	+= ov2659.o
+ obj-$(CONFIG_VIDEO_TC358743)	+= tc358743.o
+ obj-$(CONFIG_VIDEO_HI556)	+= hi556.o
+ obj-$(CONFIG_VIDEO_IMX214)	+= imx214.o
++obj-$(CONFIG_VIDEO_IMX377)	+= imx377.o
+ obj-$(CONFIG_VIDEO_IMX219)	+= imx219.o
+ obj-$(CONFIG_VIDEO_IMX258)	+= imx258.o
+ obj-$(CONFIG_VIDEO_IMX274)	+= imx274.o
+diff --git a/drivers/media/i2c/imx377.c b/drivers/media/i2c/imx377.c
+new file mode 100644
+index 000000000000..58a777d7f0c4
+--- /dev/null
++++ b/drivers/media/i2c/imx377.c
+@@ -0,0 +1,1374 @@
++/*
++ * Driver for IMX377 CMOS Image Sensor from Sony
++ *
++ * Based on imx296 driver.
++ * Copyright 2019 Laurent Pinchart <laurent.pinchart@ideasonboard.com>
++ *
++ * Adapted from IMX377 driver from nVDIDIA JetPack.
++ */
++
++#include <linux/clk.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/of_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/regmap.h>
++#include <linux/regulator/consumer.h>
++#include <linux/slab.h>
++#include <linux/videodev2.h>
++
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-fwnode.h>
++#include <media/v4l2-subdev.h>
++
++#define IMX377_REG_8BIT(n)		((1 << 16) | (n))
++#define IMX377_REG_16BIT(n)		((2 << 16) | (n))
++#define IMX377_REG_24BIT(n)		((3 << 16) | (n))
++#define IMX377_REG_SIZE_SHIFT		16
++#define IMX377_REG_ADDR_MASK		0xffff
++
++#define IMX377_CTRL00			IMX377_REG_8BIT(0x3000)
++#define IMX377_CTRL00_STANDBY		0x01
++#define IMX377_CTRL00_NORMAL_OPERATION	0x00
++
++#define IMX377_CLPSQRST			IMX377_REG_8BIT(0x3001)
++#define IMX377_XMSTA			IMX377_REG_8BIT(0x30F4)
++#define IMX377_XMSTA_MASTRE_MODE_START	0
++#define IMX377_XMSTA_MASTRE_MODE_STOP	1
++
++#define IMX377_EBDDATAEN		IMX377_REG_8BIT(0x3799)
++#define IMX377_SMD			IMX377_REG_8BIT(0x3008)
++#define IMX377_SMD_ROLLING_SHUTTER	0
++
++#define IMX377_BLKLEVEL			IMX377_REG_8BIT(0x3045)
++#define IMX377_BLKLEVEL_DEFAULT		0x32
++
++/*
++ * Pixel rate value for INCK clock at 24 Mhz
++ */
++#define IMX377_PIXEL_RATE_DEFAULT	(288000000)
++
++/* default image data format */
++#define IMX377_DEFAULT_DATAFMT		MEDIA_BUS_FMT_SRGGB10_1X10
++/* minimum frame length */
++#define IMX377_MIN_FRAME_LENGTH		(3080)
++/* maximum frame length */
++#define IMX377_MAX_FRAME_LENGTH		(0xFFFF)
++
++/* maximum coarse time */
++#define IMX377_MAX_SHR			(IMX377_MAX_FRAME_LENGTH - 4)
++/* minimum SHS1 */
++#define IMX377_MIN_SHS1_1080P_HDR	(5)
++/* minimum SHS2 */
++#define IMX377_MIN_SHS2_1080P_HDR	(82)
++/* maximum SHS2 */
++#define IMX377_MAX_SHS2_1080P_HDR	(IMX377_MAX_FRAME_LENGTH - 5)
++/* maximum SHS1 */
++#define IMX377_MAX_SHS1_1080P_HDR	(IMX377_MAX_SHS2_1080P_HDR / 16)
++
++#define IMX377_HMAX				IMX377_REG_16BIT(0x30F5)
++
++/* frame length add */
++#define IMX377_VMAX				IMX377_REG_24BIT(0x30F7)
++/* shs1 coarse time */
++#define IMX377_EXPOSURE_SHR			IMX377_REG_16BIT(0x300B)
++#define IMX377_EXPOSURE_MIN			0
++#define IMX377_EXPOSURE_MAX			3200
++#define IMX377_EXPOSURE_DFLT			100
++#define IMX377_EXPOSURE_SVR			IMX377_REG_16BIT(0x300D)
++
++#define IMX377_ANALOGUE_GAIN			IMX377_REG_16BIT(0x3009)
++#define IMX377_ANALOGUE_GAIN_MIN		0
++#define IMX377_ANALOGUE_GAIN_MAX		0x7A5
++#define IMX377_ANALOGUE_GAIN_DFLT		0x3D2
++
++#define IMX377_DIGITAL_GAIN			IMX377_REG_8BIT(0x3011)
++#define IMX377_DIGITAL_GAIN_MIN			0
++#define IMX377_DIGITAL_GAIN_MAX			3
++#define IMX377_DIGITAL_GAIN_DFLT		2
++
++#define IMX377_GROUP_HOLD_ADDR			IMX377_REG_8BIT(0x302D)
++
++/* Horizontal cropping */
++#define IMX377_HTRIMMING_EN			IMX377_REG_8BIT(0x3040)
++#define IMX377_HTRIMMING_START			IMX377_REG_16BIT(0x303E)
++#define IMX377_HTRIMMING_END			IMX377_REG_16BIT(0x3039)
++
++/* Vertical cropping */
++#define IMX377_VWIDCUTEN			IMX377_REG_8BIT(0x30D5)
++#define IMX377_VWINPOS				IMX377_REG_16BIT(0x30D8)
++#define IMX377_VWIDCUT				IMX377_REG_16BIT(0x30D6)
++#define IMX377_MDSEL9				IMX377_REG_16BIT(0x312F)
++#define IMX377_MDSEL10				IMX377_REG_16BIT(0x3131)
++
++/* default output clk frequency for camera */
++#define IMX377_DEFAULT_CLK_FREQ			24000000
++
++#define IMX377_PIXEL_ARRAY_WIDTH		3912 /* HNUM is 3912 in datasheet */
++#define IMX377_PIXEL_ARRAY_HEIGHT		2174
++
++#define IMX377_TABLE_WAIT_MS			0
++#define IMX377_TABLE_END			1
++
++static const char * const imx377_supply_names[] = {
++	"dvdd",
++	"ovdd",
++	"avdd",
++};
++
++struct imx377_reg {
++	unsigned int reg;
++	unsigned int value;
++};
++
++struct imx377 {
++	struct device *dev;
++	struct clk *clk;
++	struct regulator_bulk_data supplies[ARRAY_SIZE(imx377_supply_names)];
++	struct gpio_desc *reset;
++	struct regmap *regmap;
++
++	bool streaming;
++
++	struct v4l2_subdev subdev;
++	struct media_pad pad;
++
++	const struct imx377_reg *lane_conf_regs;
++
++	struct mutex lock; /* mutex lock for operations */
++	struct v4l2_rect crop;
++	struct v4l2_mbus_framefmt format;
++	struct v4l2_ctrl_handler ctrls;
++	struct v4l2_ctrl *hblank;
++	struct v4l2_ctrl *vblank;
++};
++
++static inline struct imx377 *to_imx377(struct v4l2_subdev *sd)
++{
++	return container_of(sd, struct imx377, subdev);
++}
++
++#ifdef CURRENTLY_NOT_NEEDED
++static int imx377_read(struct imx377 *sensor, u32 addr)
++{
++	u8 data[3] = { 0, 0, 0 };
++	int ret;
++
++	ret = regmap_raw_read(sensor->regmap, addr & IMX377_REG_ADDR_MASK, data,
++			      (addr >> IMX377_REG_SIZE_SHIFT) & 3);
++	if (ret < 0)
++		return ret;
++
++	return (data[2] << 16) | (data[1] << 8) | data[0];
++}
++#endif
++
++static int imx377_write(struct imx377 *sensor, u32 addr, u32 value)
++{
++	u8 data[3] = { value & 0xff, (value >> 8) & 0xff, value >> 16 };
++	int ret;
++
++	ret = regmap_raw_write(sensor->regmap, addr & IMX377_REG_ADDR_MASK,
++			       data, (addr >> IMX377_REG_SIZE_SHIFT) & 3);
++	if (ret < 0) {
++		dev_err(sensor->dev, "%u-bit write to 0x%04x failed: %d\n",
++			((addr >> IMX377_REG_SIZE_SHIFT) & 3) * 8,
++			addr & IMX377_REG_ADDR_MASK, ret);
++	}
++
++	return ret;
++}
++
++static int imx377_power_on(struct imx377 *sensor)
++{
++	int ret;
++
++	ret = regulator_bulk_enable(ARRAY_SIZE(sensor->supplies),
++				    sensor->supplies);
++	if (ret < 0)
++		return ret;
++
++	udelay(1);
++
++	ret = gpiod_direction_output(sensor->reset, 0);
++	if (ret < 0)
++		goto err_supply;
++
++	udelay(1);
++
++	ret = clk_prepare_enable(sensor->clk);
++	if (ret < 0)
++		goto err_reset;
++
++	usleep_range(100000, 200000);
++
++	return 0;
++
++err_reset:
++	gpiod_direction_output(sensor->reset, 1);
++err_supply:
++	regulator_bulk_disable(ARRAY_SIZE(sensor->supplies), sensor->supplies);
++	return ret;
++}
++
++static void imx377_power_off(struct imx377 *sensor)
++{
++	clk_disable_unprepare(sensor->clk);
++	gpiod_direction_output(sensor->reset, 1);
++	regulator_bulk_disable(ARRAY_SIZE(sensor->supplies), sensor->supplies);
++}
++
++/* -----------------------------------------------------------------------------
++ * Controls
++ */
++
++static int imx377_s_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct imx377 *sensor = container_of(ctrl->handler, struct imx377, ctrls);
++	const struct v4l2_mbus_framefmt *format;
++	int ret = 0;
++
++	if (!sensor->streaming)
++		return 0;
++
++	format = &sensor->format;
++
++	switch (ctrl->id) {
++	case V4L2_CID_EXPOSURE:
++		ret = imx377_write(sensor, IMX377_EXPOSURE_SHR, ctrl->val);
++		break;
++
++	case V4L2_CID_ANALOGUE_GAIN:
++		ret = imx377_write(sensor, IMX377_ANALOGUE_GAIN, ctrl->val);
++		break;
++
++	case V4L2_CID_DIGITAL_GAIN:
++		ret = imx377_write(sensor, IMX377_DIGITAL_GAIN, ctrl->val);
++		break;
++
++	case V4L2_CID_HBLANK:
++		ret = imx377_write(sensor, IMX377_HMAX, ctrl->val);
++		break;
++
++	case V4L2_CID_VBLANK:
++		ret = imx377_write(sensor, IMX377_VMAX, format->height + ctrl->val);
++		break;
++
++	default:
++		ret = -EINVAL;
++		break;
++	}
++
++	return ret;
++}
++
++static const struct v4l2_ctrl_ops imx377_ctrl_ops = {
++	.s_ctrl = imx377_s_ctrl,
++};
++
++static int imx377_ctrls_init(struct imx377 *sensor)
++{
++	struct v4l2_fwnode_device_properties props;
++	int ret;
++
++	ret = v4l2_fwnode_device_parse(sensor->dev, &props);
++	if (ret < 0)
++		return ret;
++
++	v4l2_ctrl_handler_init(&sensor->ctrls, 7);
++
++	v4l2_ctrl_new_std(&sensor->ctrls, &imx377_ctrl_ops,
++			  V4L2_CID_EXPOSURE,
++			  IMX377_EXPOSURE_MIN,
++			  IMX377_EXPOSURE_MAX, 1,
++			  IMX377_EXPOSURE_DFLT);
++	v4l2_ctrl_new_std(&sensor->ctrls, &imx377_ctrl_ops,
++			  V4L2_CID_ANALOGUE_GAIN, IMX377_ANALOGUE_GAIN_MIN,
++			  IMX377_ANALOGUE_GAIN_MAX, 1,
++			  IMX377_ANALOGUE_GAIN_DFLT);
++	v4l2_ctrl_new_std(&sensor->ctrls, &imx377_ctrl_ops,
++			  V4L2_CID_DIGITAL_GAIN, IMX377_DIGITAL_GAIN_MIN,
++			  IMX377_DIGITAL_GAIN_MAX, 1,
++			  IMX377_DIGITAL_GAIN_DFLT);
++
++	sensor->hblank = v4l2_ctrl_new_std(&sensor->ctrls, &imx377_ctrl_ops,
++					   V4L2_CID_HBLANK, 260,
++					   65536 - IMX377_PIXEL_ARRAY_WIDTH,
++					   1, 2220);
++
++	sensor->vblank = v4l2_ctrl_new_std(&sensor->ctrls, &imx377_ctrl_ops,
++					   V4L2_CID_VBLANK, 625,
++					   1048575 - IMX377_PIXEL_ARRAY_HEIGHT,
++					   1, 625);
++	/*
++	 * The sensor calculates the MIPI timings internally to achieve a bit
++	 * rate between 1122 and 1198 Mbps. The exact value is unfortunately not
++	 * reported, at least according to the documentation. Report a nominal
++	 * rate of 1188 Mbps as that is used by the datasheet in multiple
++	 * examples.
++	 */
++	v4l2_ctrl_new_std(&sensor->ctrls, NULL, V4L2_CID_PIXEL_RATE,
++			  IMX377_PIXEL_RATE_DEFAULT, IMX377_PIXEL_RATE_DEFAULT, 1,
++			  IMX377_PIXEL_RATE_DEFAULT);
++
++	v4l2_ctrl_new_fwnode_properties(&sensor->ctrls, &imx377_ctrl_ops,
++					&props);
++
++	if (sensor->ctrls.error) {
++		dev_err(sensor->dev, "failed to add controls (%d)\n",
++			sensor->ctrls.error);
++		v4l2_ctrl_handler_free(&sensor->ctrls);
++		return sensor->ctrls.error;
++	}
++
++	sensor->subdev.ctrl_handler = &sensor->ctrls;
++
++	return 0;
++}
++
++/* -----------------------------------------------------------------------------
++ * V4L2 Subdev Operations
++ */
++
++static const struct imx377_reg imx377_init_table[] = {
++	{ IMX377_TABLE_WAIT_MS, 10 },
++	/* Roughly adapted from 'Standby Cancel Sequence' */
++
++	/* Step 1 - Standby Cancel Sequence - Input Frequency Setting, input clock 24Mhz */
++	{ IMX377_REG_8BIT(0x3120), 0xf0 }, /* PLRD1 */
++	{ IMX377_REG_8BIT(0x3121), 0x00 }, /* PLRD1 */
++	{ IMX377_REG_8BIT(0x3129), 0x90 }, /* PLRD2 */ 
++	{ IMX377_REG_8BIT(0x3122), 0x02 }, /* PLRD3 */
++	{ IMX377_REG_8BIT(0x312A), 0x02 }, /* PLRD4 */
++	{ IMX377_REG_8BIT(0x3123), 0x00 }, /* PLRD10 */
++	{ IMX377_REG_8BIT(0x3124), 0x00 }, /* PLRD11 */
++	{ IMX377_REG_8BIT(0x3125), 0x01 }, /* PLRD12 */
++	{ IMX377_REG_8BIT(0x3127), 0x02 }, /* PLRD13 */
++	{ IMX377_REG_8BIT(0x312D), 0x02 }, /* PLRD14 */
++
++	/* Sony magic registers - set as the datahseet suggests */
++	{ IMX377_REG_8BIT(0x3003), 0x20 },
++	{ IMX377_REG_8BIT(0x304E), 0x02 },
++	{ IMX377_REG_8BIT(0x3057), 0x4A },
++	{ IMX377_REG_8BIT(0x3058), 0xF6 },
++	{ IMX377_REG_8BIT(0x3059), 0x00 },
++	{ IMX377_REG_8BIT(0x306B), 0x04 },
++	{ IMX377_REG_8BIT(0x3145), 0x00 },
++	{ IMX377_REG_8BIT(0x3202), 0x63 },
++	{ IMX377_REG_8BIT(0x3203), 0x00 },
++	{ IMX377_REG_8BIT(0x3236), 0x64 },
++	{ IMX377_REG_8BIT(0x3237), 0x00 },
++	{ IMX377_REG_8BIT(0x3304), 0x00 },
++	{ IMX377_REG_8BIT(0x3304), 0x0B },
++	{ IMX377_REG_8BIT(0x3305), 0x00 },
++	{ IMX377_REG_8BIT(0x3306), 0x0B },
++	{ IMX377_REG_8BIT(0x3307), 0x00 },
++	{ IMX377_REG_8BIT(0x337F), 0x64 },
++	{ IMX377_REG_8BIT(0x3380), 0x00 },
++	{ IMX377_REG_8BIT(0x338D), 0x64 },
++	{ IMX377_REG_8BIT(0x338E), 0x00 },
++	{ IMX377_REG_8BIT(0x3510), 0x72 },
++	{ IMX377_REG_8BIT(0x3511), 0x00 },
++	{ IMX377_REG_8BIT(0x3528), 0x0F },
++	{ IMX377_REG_8BIT(0x3529), 0x0F },
++	{ IMX377_REG_8BIT(0x352A), 0x0F },
++	{ IMX377_REG_8BIT(0x352B), 0x0F },
++	{ IMX377_REG_8BIT(0x3538), 0x0F },
++	{ IMX377_REG_8BIT(0x3539), 0x13 },
++	{ IMX377_REG_8BIT(0x353C), 0x01 },
++	{ IMX377_REG_8BIT(0x3553), 0x00 },
++	{ IMX377_REG_8BIT(0x3554), 0x00 },
++	{ IMX377_REG_8BIT(0x3555), 0x00 },
++	{ IMX377_REG_8BIT(0x3556), 0x00 },
++	{ IMX377_REG_8BIT(0x3557), 0x00 },
++	{ IMX377_REG_8BIT(0x3558), 0x00 },
++	{ IMX377_REG_8BIT(0x3559), 0x00 },
++	{ IMX377_REG_8BIT(0x355A), 0x00 },
++	{ IMX377_REG_8BIT(0x357D), 0x07 },
++	{ IMX377_REG_8BIT(0x357F), 0x07 },
++	{ IMX377_REG_8BIT(0x3580), 0x04 },
++	{ IMX377_REG_8BIT(0x3583), 0x60 },
++	{ IMX377_REG_8BIT(0x3587), 0x01 },
++	{ IMX377_REG_8BIT(0x3590), 0x0b },
++	{ IMX377_REG_8BIT(0x3591), 0x00 },
++	{ IMX377_REG_8BIT(0x35BA), 0x0F },
++	{ IMX377_REG_8BIT(0x366A), 0x0C },
++	{ IMX377_REG_8BIT(0x366B), 0x0B },
++	{ IMX377_REG_8BIT(0x366C), 0x07 },
++	{ IMX377_REG_8BIT(0x366D), 0x00 },
++	{ IMX377_REG_8BIT(0x366E), 0x00 },
++	{ IMX377_REG_8BIT(0x366F), 0x00 },
++	{ IMX377_REG_8BIT(0x3670), 0x00 },
++	{ IMX377_REG_8BIT(0x3671), 0x00 },
++	{ IMX377_REG_8BIT(0x3672), 0x00 },
++	{ IMX377_REG_8BIT(0x3673), 0x00 },
++	{ IMX377_REG_8BIT(0x3674), 0xDF },
++	{ IMX377_REG_8BIT(0x3675), 0x00 },
++	{ IMX377_REG_8BIT(0x3676), 0xA7 },
++	{ IMX377_REG_8BIT(0x3677), 0x01 },
++	{ IMX377_REG_8BIT(0x3687), 0x00 },
++	{ IMX377_REG_8BIT(0x375C), 0x02 },
++	{ IMX377_REG_8BIT(0x380A), 0x0A },
++	{ IMX377_REG_8BIT(0x382B), 0x16 },
++
++	/* Step 2 - Standby Cancel Sequence */
++	{ IMX377_REG_8BIT(0x3000), 0x16 },
++	{ IMX377_REG_8BIT(0x3018), 0xA2 },
++	{ IMX377_REG_8BIT(0x3399), 0x01 },
++	{ IMX377_REG_8BIT(0x310B), 0x11 },
++	{ IMX377_REG_8BIT(0x3A56), 0x00 },
++
++	/* Step 3 - Standby Cancel Sequence */
++	{ IMX377_TABLE_WAIT_MS, 20 },
++	{ IMX377_REG_8BIT(0x310B), 0x00 },
++
++	/* Step 4 - Standby Cancel Sequence */
++	{ IMX377_TABLE_WAIT_MS, 10 },
++	{ IMX377_REG_8BIT(0x3000), 0x04 },
++
++	/* Step 5a - Standby Cancel Sequence - Readout drive mode registers */
++	/* Will be one of imx377_readout_mode{0,1,2,3} */
++
++	{ IMX377_TABLE_END, 0 }
++};
++
++static const struct imx377_reg imx377_2_lane_conf[] = {
++	{ IMX377_REG_8BIT(0x312E), 0x01},
++	{ IMX377_REG_8BIT(0x3AA2), 0x01},
++	{ IMX377_TABLE_END, 0 }
++};
++
++/* Readout mode 0 - All-pixel scan mode (12 bits) - 3-2. When Using Type 1/2.5 Approx. 9.03 M Pixels (Approx. 17:9) */
++static const struct imx377_reg imx377_readout_mode0[] = {
++	{ IMX377_TABLE_WAIT_MS, 10 },
++	{ IMX377_REG_8BIT(0x3004), 0x10 }, /* MDSEL1 */
++	{ IMX377_REG_8BIT(0x3005), 0x07 }, /* MDSEL2 */
++	{ IMX377_REG_8BIT(0x3006), 0x01 }, /* MDSEL3 */
++	{ IMX377_REG_8BIT(0x3007), 0xA0 }, /* MDSEL4 */
++	{ IMX377_REG_8BIT(0x300D), 0x00 }, /* SVR */
++	{ IMX377_REG_8BIT(0x300E), 0x00 }, /* SVR */
++	{ IMX377_REG_8BIT(0x301A), 0x00 }, /* MDVREV - VFLIP */
++	{ IMX377_REG_8BIT(0x3039), 0x00 }, /* HTRIMMING_END */
++	{ IMX377_REG_8BIT(0x303A), 0x00 }, /* HTRIMMING_END */
++	{ IMX377_REG_8BIT(0x303E), 0x00 }, /* HTRIMMING_START */
++	{ IMX377_REG_8BIT(0x303F), 0x00 }, /* HTRIMMING_START */
++	{ IMX377_REG_8BIT(0x3040), 0x00 }, /* HTRIMMING_EN */
++	{ IMX377_REG_8BIT(0x3068), 0x00 }, /* MDSEL7 */
++	{ IMX377_REG_8BIT(0x307E), 0x00 }, /* MDSEL5 */
++	{ IMX377_REG_8BIT(0x307F), 0x00 }, /* MDSEL5 */
++	{ IMX377_REG_8BIT(0x3080), 0x00 }, /* MDPLS01 */
++	{ IMX377_REG_8BIT(0x3081), 0x00 }, /* MDPLS01 */
++	{ IMX377_REG_8BIT(0x3082), 0x00 }, /* MDPLS02 */
++	{ IMX377_REG_8BIT(0x3083), 0x00 }, /* MDPLS02 */
++	{ IMX377_REG_8BIT(0x3084), 0x00 }, /* MDPLS03 */
++	{ IMX377_REG_8BIT(0x3085), 0x00 }, /* MDPLS03 */
++	{ IMX377_REG_8BIT(0x3086), 0x00 }, /* MDPLS04 */
++	{ IMX377_REG_8BIT(0x3087), 0x00 }, /* MDPLS04 */
++	{ IMX377_REG_8BIT(0x3095), 0x00 }, /* MDPLS05 */
++	{ IMX377_REG_8BIT(0x3096), 0x00 }, /* MDPLS05 */
++	{ IMX377_REG_8BIT(0x3097), 0x00 }, /* MDPLS06 */
++	{ IMX377_REG_8BIT(0x3098), 0x00 }, /* MDPLS06 */
++	{ IMX377_REG_8BIT(0x3099), 0x00 }, /* MDPLS07 */
++	{ IMX377_REG_8BIT(0x309A), 0x00 }, /* MDPLS07 */
++	{ IMX377_REG_8BIT(0x309B), 0x00 }, /* MDPLS08 */
++	{ IMX377_REG_8BIT(0x309C), 0x00 }, /* MDPLS08 */
++	{ IMX377_REG_8BIT(0x30BC), 0x00 }, /* MDPLS40 */
++	{ IMX377_REG_8BIT(0x30BD), 0x00 }, /* MDPLS40 */
++	{ IMX377_REG_8BIT(0x30BE), 0x00 }, /* MDPLS41 */
++	{ IMX377_REG_8BIT(0x30BF), 0x00 }, /* MDPLS41 */
++	{ IMX377_REG_8BIT(0x30C0), 0x00 }, /* MDPLS42 */
++	{ IMX377_REG_8BIT(0x30C1), 0x00 }, /* MDPLS42 */
++	{ IMX377_REG_8BIT(0x30C2), 0x00 }, /* MDPLS43 */
++	{ IMX377_REG_8BIT(0x30C3), 0x00 }, /* MDPLS43 */
++	{ IMX377_REG_8BIT(0x30C4), 0x00 }, /* MDPLS44 */
++	{ IMX377_REG_8BIT(0x30C5), 0x00 }, /* MDPLS44 */
++	{ IMX377_REG_8BIT(0x30C6), 0x00 }, /* MDPLS45 */
++	{ IMX377_REG_8BIT(0x30C7), 0x00 }, /* MDPLS45 */
++	{ IMX377_REG_8BIT(0x30C8), 0x00 }, /* MDPLS46 */
++	{ IMX377_REG_8BIT(0x30C9), 0x00 }, /* MDPLS46 */
++	{ IMX377_REG_8BIT(0x30CA), 0x00 }, /* MDPLS47 */
++	{ IMX377_REG_8BIT(0x30CB), 0x00 }, /* MDPLS47 */
++	{ IMX377_REG_8BIT(0x30CC), 0x00 }, /* MDPLS48 */
++	{ IMX377_REG_8BIT(0x30D0), 0x00 }, /* MDPLS52 */
++	{ IMX377_REG_8BIT(0x30D1), 0x00 }, /* MDPLS52 */
++	{ IMX377_REG_8BIT(0x30D5), 0x00 }, /* VWIDCUTEN */
++	{ IMX377_REG_8BIT(0x30D6), 0x00 }, /* VWIDCUT */
++	{ IMX377_REG_8BIT(0x30D7), 0x00 }, /* VWIDCUT */
++	{ IMX377_REG_8BIT(0x30D8), 0x00 }, /* VWINPOS */
++	{ IMX377_REG_8BIT(0x30D9), 0x00 }, /* VWINPOS */
++	{ IMX377_REG_8BIT(0x30DA), 0x00 }, /* MDREG01 */
++	{ IMX377_REG_8BIT(0x30EE), 0x01 }, /* MDREG02 */
++	{ IMX377_REG_8BIT(0x30F5), 0x9D }, /* HMAX */
++	{ IMX377_REG_8BIT(0x30F6), 0x02 }, /* HMAX */
++	{ IMX377_REG_8BIT(0x30F7), 0xAC }, /* VMAX */
++	{ IMX377_REG_8BIT(0x30F8), 0x08 }, /* VMAX */
++	{ IMX377_REG_8BIT(0x30F9), 0x00 }, /* VMAX */
++	{ IMX377_REG_8BIT(0x312F), 0x86 }, /* MDSEL9 */
++	{ IMX377_REG_8BIT(0x3130), 0x08 }, /* MDSEL9 */
++	{ IMX377_REG_8BIT(0x3131), 0x7E }, /* MDSEL10 */
++	{ IMX377_REG_8BIT(0x3132), 0x08 }, /* MDSEL10 */
++	{ IMX377_REG_8BIT(0x3A41), 0x08 }, /* MDSEL11 */
++
++	{ IMX377_TABLE_END, 0 }
++};
++
++/* Readout mode 1 - All-pixel scan mode (10 bits) - 3-2. When Using Type 1/2.5 Approx. 9.03 M Pixels (Approx. 17:9) */
++static const struct imx377_reg imx377_readout_mode1[] = {
++	{ IMX377_TABLE_WAIT_MS, 10 },
++	{ IMX377_REG_8BIT(0x3004), 0x19 }, /* MDSEL1 */
++	{ IMX377_REG_8BIT(0x3005), 0x01 }, /* MDSEL2 */
++	{ IMX377_REG_8BIT(0x3006), 0x04 }, /* MDSEL3 */
++	{ IMX377_REG_8BIT(0x3007), 0xA0 }, /* MDSEL4 */
++	{ IMX377_REG_8BIT(0x300D), 0x00 }, /* SVR */
++	{ IMX377_REG_8BIT(0x300E), 0x00 }, /* SVR */
++	{ IMX377_REG_8BIT(0x301A), 0x00 }, /* MDVREV - VFLIP */
++	{ IMX377_REG_8BIT(0x3039), 0x00 }, /* HTRIMMING_END */
++	{ IMX377_REG_8BIT(0x303A), 0x00 }, /* HTRIMMING_END */
++	{ IMX377_REG_8BIT(0x303E), 0x00 }, /* HTRIMMING_START */
++	{ IMX377_REG_8BIT(0x303F), 0x00 }, /* HTRIMMING_START */
++	{ IMX377_REG_8BIT(0x3040), 0x00 }, /* HTRIMMING_EN */
++	{ IMX377_REG_8BIT(0x3068), 0x00 }, /* MDSEL7 */
++	{ IMX377_REG_8BIT(0x307E), 0x00 }, /* MDSEL5 */
++	{ IMX377_REG_8BIT(0x307F), 0x08 }, /* MDSEL5 */
++	{ IMX377_REG_8BIT(0x3080), 0x00 }, /* MDPLS01 */
++	{ IMX377_REG_8BIT(0x3081), 0x00 }, /* MDPLS01 */
++	{ IMX377_REG_8BIT(0x3082), 0x00 }, /* MDPLS02 */
++	{ IMX377_REG_8BIT(0x3083), 0x00 }, /* MDPLS02 */
++	{ IMX377_REG_8BIT(0x3084), 0x00 }, /* MDPLS03 */
++	{ IMX377_REG_8BIT(0x3085), 0x00 }, /* MDPLS03 */
++	{ IMX377_REG_8BIT(0x3086), 0x00 }, /* MDPLS04 */
++	{ IMX377_REG_8BIT(0x3087), 0x00 }, /* MDPLS04 */
++	{ IMX377_REG_8BIT(0x3095), 0x00 }, /* MDPLS05 */
++	{ IMX377_REG_8BIT(0x3096), 0x00 }, /* MDPLS05 */
++	{ IMX377_REG_8BIT(0x3097), 0x00 }, /* MDPLS06 */
++	{ IMX377_REG_8BIT(0x3098), 0x00 }, /* MDPLS06 */
++	{ IMX377_REG_8BIT(0x3099), 0x00 }, /* MDPLS07 */
++	{ IMX377_REG_8BIT(0x309A), 0x00 }, /* MDPLS07 */
++	{ IMX377_REG_8BIT(0x309B), 0x00 }, /* MDPLS08 */
++	{ IMX377_REG_8BIT(0x309C), 0x00 }, /* MDPLS08 */
++	{ IMX377_REG_8BIT(0x30BC), 0x00 }, /* MDPLS40 */
++	{ IMX377_REG_8BIT(0x30BD), 0x00 }, /* MDPLS40 */
++	{ IMX377_REG_8BIT(0x30BE), 0x00 }, /* MDPLS41 */
++	{ IMX377_REG_8BIT(0x30BF), 0x00 }, /* MDPLS41 */
++	{ IMX377_REG_8BIT(0x30C0), 0x00 }, /* MDPLS42 */
++	{ IMX377_REG_8BIT(0x30C1), 0x00 }, /* MDPLS42 */
++	{ IMX377_REG_8BIT(0x30C2), 0x00 }, /* MDPLS43 */
++	{ IMX377_REG_8BIT(0x30C3), 0x00 }, /* MDPLS43 */
++	{ IMX377_REG_8BIT(0x30C4), 0x00 }, /* MDPLS44 */
++	{ IMX377_REG_8BIT(0x30C5), 0x00 }, /* MDPLS44 */
++	{ IMX377_REG_8BIT(0x30C6), 0x00 }, /* MDPLS45 */
++	{ IMX377_REG_8BIT(0x30C7), 0x00 }, /* MDPLS45 */
++	{ IMX377_REG_8BIT(0x30C8), 0x00 }, /* MDPLS46 */
++	{ IMX377_REG_8BIT(0x30C9), 0x00 }, /* MDPLS46 */
++	{ IMX377_REG_8BIT(0x30CA), 0x00 }, /* MDPLS47 */
++	{ IMX377_REG_8BIT(0x30CB), 0x00 }, /* MDPLS47 */
++	{ IMX377_REG_8BIT(0x30CC), 0x00 }, /* MDPLS48 */
++	{ IMX377_REG_8BIT(0x30D0), 0x48 }, /* MDPLS52 */
++	{ IMX377_REG_8BIT(0x30D1), 0x0F }, /* MDPLS52 */
++	{ IMX377_REG_8BIT(0x30D5), 0x00 }, /* VWIDCUTEN */
++	{ IMX377_REG_8BIT(0x30D6), 0x00 }, /* VWIDCUT */
++	{ IMX377_REG_8BIT(0x30D7), 0x00 }, /* VWIDCUT */
++	{ IMX377_REG_8BIT(0x30D8), 0x00 }, /* VWINPOS */
++	{ IMX377_REG_8BIT(0x30D9), 0x00 }, /* VWINPOS */
++	{ IMX377_REG_8BIT(0x30DA), 0x00 }, /* MDREG01 */
++	{ IMX377_REG_8BIT(0x30EE), 0x01 }, /* MDREG02 */
++	{ IMX377_REG_8BIT(0x30F5), 0x71 }, /* HMAX */
++	{ IMX377_REG_8BIT(0x30F6), 0x02 }, /* HMAX */
++	{ IMX377_REG_8BIT(0x30F7), 0xAC }, /* VMAX */
++	{ IMX377_REG_8BIT(0x30F8), 0x08 }, /* VMAX */
++	{ IMX377_REG_8BIT(0x30F9), 0x00 }, /* VMAX */
++	{ IMX377_REG_8BIT(0x312F), 0x86 }, /* MDSEL9 */
++	{ IMX377_REG_8BIT(0x3130), 0x08 }, /* MDSEL9 */
++	{ IMX377_REG_8BIT(0x3131), 0x7E }, /* MDSEL10 */
++	{ IMX377_REG_8BIT(0x3132), 0x08 }, /* MDSEL10 */
++	{ IMX377_REG_8BIT(0x3A41), 0x08 }, /* MDSEL11 */
++
++	{ IMX377_TABLE_END, 0 }
++};
++
++/* Readout mode 2 - Horizontal/vertical 2/2-line binning - 3-2. When Using Type 1/2.5 Approx. 9.03 M Pixels (Approx. 17:9) */
++static const struct imx377_reg imx377_readout_mode2[] = {
++	{ IMX377_TABLE_WAIT_MS, 10 },
++	{ IMX377_REG_8BIT(0x3004), 0xB1 }, /* MDSEL1 */
++	{ IMX377_REG_8BIT(0x3005), 0x25 }, /* MDSEL2 */
++	{ IMX377_REG_8BIT(0x3006), 0x01 }, /* MDSEL3 */
++	{ IMX377_REG_8BIT(0x3007), 0xA0 }, /* MDSEL4 */
++	{ IMX377_REG_8BIT(0x300D), 0x00 }, /* SVR */
++	{ IMX377_REG_8BIT(0x300E), 0x00 }, /* SVR */
++	{ IMX377_REG_8BIT(0x301A), 0x00 }, /* MDVREV - VFLIP */
++	{ IMX377_REG_8BIT(0x3039), 0x00 }, /* HTRIMMING_END */
++	{ IMX377_REG_8BIT(0x303A), 0x00 }, /* HTRIMMING_END */
++	{ IMX377_REG_8BIT(0x303E), 0x00 }, /* HTRIMMING_START */
++	{ IMX377_REG_8BIT(0x303F), 0x00 }, /* HTRIMMING_START */
++	{ IMX377_REG_8BIT(0x3040), 0x00 }, /* HTRIMMING_EN */
++	{ IMX377_REG_8BIT(0x3068), 0x00 }, /* MDSEL7 */
++	{ IMX377_REG_8BIT(0x307E), 0x00 }, /* MDSEL5 */
++	{ IMX377_REG_8BIT(0x307F), 0x00 }, /* MDSEL5 */
++	{ IMX377_REG_8BIT(0x3080), 0x00 }, /* MDPLS01 */
++	{ IMX377_REG_8BIT(0x3081), 0x00 }, /* MDPLS01 */
++	{ IMX377_REG_8BIT(0x3082), 0x00 }, /* MDPLS02 */
++	{ IMX377_REG_8BIT(0x3083), 0x00 }, /* MDPLS02 */
++	{ IMX377_REG_8BIT(0x3084), 0x00 }, /* MDPLS03 */
++	{ IMX377_REG_8BIT(0x3085), 0x00 }, /* MDPLS03 */
++	{ IMX377_REG_8BIT(0x3086), 0x00 }, /* MDPLS04 */
++	{ IMX377_REG_8BIT(0x3087), 0x00 }, /* MDPLS04 */
++	{ IMX377_REG_8BIT(0x3095), 0x00 }, /* MDPLS05 */
++	{ IMX377_REG_8BIT(0x3096), 0x00 }, /* MDPLS05 */
++	{ IMX377_REG_8BIT(0x3097), 0x00 }, /* MDPLS06 */
++	{ IMX377_REG_8BIT(0x3098), 0x00 }, /* MDPLS06 */
++	{ IMX377_REG_8BIT(0x3099), 0x00 }, /* MDPLS07 */
++	{ IMX377_REG_8BIT(0x309A), 0x00 }, /* MDPLS07 */
++	{ IMX377_REG_8BIT(0x309B), 0x00 }, /* MDPLS08 */
++	{ IMX377_REG_8BIT(0x309C), 0x00 }, /* MDPLS08 */
++	{ IMX377_REG_8BIT(0x30BC), 0x00 }, /* MDPLS40 */
++	{ IMX377_REG_8BIT(0x30BD), 0x00 }, /* MDPLS40 */
++	{ IMX377_REG_8BIT(0x30BE), 0x00 }, /* MDPLS41 */
++	{ IMX377_REG_8BIT(0x30BF), 0x00 }, /* MDPLS41 */
++	{ IMX377_REG_8BIT(0x30C0), 0x00 }, /* MDPLS42 */
++	{ IMX377_REG_8BIT(0x30C1), 0x00 }, /* MDPLS42 */
++	{ IMX377_REG_8BIT(0x30C2), 0x00 }, /* MDPLS43 */
++	{ IMX377_REG_8BIT(0x30C3), 0x00 }, /* MDPLS43 */
++	{ IMX377_REG_8BIT(0x30C4), 0x00 }, /* MDPLS44 */
++	{ IMX377_REG_8BIT(0x30C5), 0x00 }, /* MDPLS44 */
++	{ IMX377_REG_8BIT(0x30C6), 0x00 }, /* MDPLS45 */
++	{ IMX377_REG_8BIT(0x30C7), 0x00 }, /* MDPLS45 */
++	{ IMX377_REG_8BIT(0x30C8), 0x00 }, /* MDPLS46 */
++	{ IMX377_REG_8BIT(0x30C9), 0x00 }, /* MDPLS46 */
++	{ IMX377_REG_8BIT(0x30CA), 0x00 }, /* MDPLS47 */
++	{ IMX377_REG_8BIT(0x30CB), 0x00 }, /* MDPLS47 */
++	{ IMX377_REG_8BIT(0x30CC), 0x00 }, /* MDPLS48 */
++	{ IMX377_REG_8BIT(0x30D0), 0x48 }, /* MDPLS52 */
++	{ IMX377_REG_8BIT(0x30D1), 0x0F }, /* MDPLS52 */
++	{ IMX377_REG_8BIT(0x30D5), 0x00 }, /* VWIDCUTEN */
++	{ IMX377_REG_8BIT(0x30D6), 0x00 }, /* VWIDCUT */
++	{ IMX377_REG_8BIT(0x30D7), 0x00 }, /* VWIDCUT */
++	{ IMX377_REG_8BIT(0x30D8), 0x00 }, /* VWINPOS */
++	{ IMX377_REG_8BIT(0x30D9), 0x00 }, /* VWINPOS */
++	{ IMX377_REG_8BIT(0x30DA), 0x02 }, /* MDREG01 */
++	{ IMX377_REG_8BIT(0x30EE), 0x01 }, /* MDREG02 */
++	{ IMX377_REG_8BIT(0x30F5), 0x04 }, /* HMAX */
++	{ IMX377_REG_8BIT(0x30F6), 0x01 }, /* HMAX */
++	{ IMX377_REG_8BIT(0x30F7), 0x5D }, /* VMAX */
++	{ IMX377_REG_8BIT(0x30F8), 0x04 }, /* VMAX */
++	{ IMX377_REG_8BIT(0x30F9), 0x00 }, /* VMAX */
++	{ IMX377_REG_8BIT(0x312F), 0x4A }, /* MDSEL9 */
++	{ IMX377_REG_8BIT(0x3130), 0x04 }, /* MDSEL9 */
++	{ IMX377_REG_8BIT(0x3131), 0x46 }, /* MDSEL10 */
++	{ IMX377_REG_8BIT(0x3132), 0x04 }, /* MDSEL10 */
++	{ IMX377_REG_8BIT(0x3A41), 0x04 }, /* MDSEL11 */
++
++	{ IMX377_TABLE_END, 0 }
++};
++
++/* Readout mode 3 - Horizontal/vertical 2/2-line binning - 3-2. When Using Type 1/2.5 Approx. 9.03 M Pixels (Approx. 17:9) */
++static const struct imx377_reg imx377_readout_mode3[] = {
++	{ IMX377_TABLE_WAIT_MS, 10 },
++	{ IMX377_REG_8BIT(0x3004), 0x53 }, /* MDSEL1 */
++	{ IMX377_REG_8BIT(0x3005), 0x35 }, /* MDSEL2 */
++	{ IMX377_REG_8BIT(0x3006), 0x01 }, /* MDSEL3 */
++	{ IMX377_REG_8BIT(0x3007), 0xA0 }, /* MDSEL4 */
++	{ IMX377_REG_8BIT(0x300D), 0x00 }, /* SVR */
++	{ IMX377_REG_8BIT(0x300E), 0x00 }, /* SVR */
++	{ IMX377_REG_8BIT(0x301A), 0x00 }, /* MDVREV - VFLIP */
++	{ IMX377_REG_8BIT(0x3039), 0x00 }, /* HTRIMMING_END */
++	{ IMX377_REG_8BIT(0x303A), 0x00 }, /* HTRIMMING_END */
++	{ IMX377_REG_8BIT(0x303E), 0x00 }, /* HTRIMMING_START */
++	{ IMX377_REG_8BIT(0x303F), 0x00 }, /* HTRIMMING_START */
++	{ IMX377_REG_8BIT(0x3040), 0x00 }, /* HTRIMMING_EN */
++	{ IMX377_REG_8BIT(0x3068), 0x00 }, /* MDSEL7 */
++	{ IMX377_REG_8BIT(0x307E), 0x00 }, /* MDSEL5 */
++	{ IMX377_REG_8BIT(0x307F), 0x00 }, /* MDSEL5 */
++	{ IMX377_REG_8BIT(0x3080), 0x00 }, /* MDPLS01 */
++	{ IMX377_REG_8BIT(0x3081), 0x00 }, /* MDPLS01 */
++	{ IMX377_REG_8BIT(0x3082), 0x00 }, /* MDPLS02 */
++	{ IMX377_REG_8BIT(0x3083), 0x00 }, /* MDPLS02 */
++	{ IMX377_REG_8BIT(0x3084), 0x00 }, /* MDPLS03 */
++	{ IMX377_REG_8BIT(0x3085), 0x00 }, /* MDPLS03 */
++	{ IMX377_REG_8BIT(0x3086), 0x00 }, /* MDPLS04 */
++	{ IMX377_REG_8BIT(0x3087), 0x00 }, /* MDPLS04 */
++	{ IMX377_REG_8BIT(0x3095), 0x00 }, /* MDPLS05 */
++	{ IMX377_REG_8BIT(0x3096), 0x00 }, /* MDPLS05 */
++	{ IMX377_REG_8BIT(0x3097), 0x00 }, /* MDPLS06 */
++	{ IMX377_REG_8BIT(0x3098), 0x00 }, /* MDPLS06 */
++	{ IMX377_REG_8BIT(0x3099), 0x00 }, /* MDPLS07 */
++	{ IMX377_REG_8BIT(0x309A), 0x00 }, /* MDPLS07 */
++	{ IMX377_REG_8BIT(0x309B), 0x00 }, /* MDPLS08 */
++	{ IMX377_REG_8BIT(0x309C), 0x00 }, /* MDPLS08 */
++	{ IMX377_REG_8BIT(0x30BC), 0x00 }, /* MDPLS40 */
++	{ IMX377_REG_8BIT(0x30BD), 0x00 }, /* MDPLS40 */
++	{ IMX377_REG_8BIT(0x30BE), 0x00 }, /* MDPLS41 */
++	{ IMX377_REG_8BIT(0x30BF), 0x00 }, /* MDPLS41 */
++	{ IMX377_REG_8BIT(0x30C0), 0x00 }, /* MDPLS42 */
++	{ IMX377_REG_8BIT(0x30C1), 0x00 }, /* MDPLS42 */
++	{ IMX377_REG_8BIT(0x30C2), 0x00 }, /* MDPLS43 */
++	{ IMX377_REG_8BIT(0x30C3), 0x00 }, /* MDPLS43 */
++	{ IMX377_REG_8BIT(0x30C4), 0x00 }, /* MDPLS44 */
++	{ IMX377_REG_8BIT(0x30C5), 0x00 }, /* MDPLS44 */
++	{ IMX377_REG_8BIT(0x30C6), 0x00 }, /* MDPLS45 */
++	{ IMX377_REG_8BIT(0x30C7), 0x00 }, /* MDPLS45 */
++	{ IMX377_REG_8BIT(0x30C8), 0x00 }, /* MDPLS46 */
++	{ IMX377_REG_8BIT(0x30C9), 0x00 }, /* MDPLS46 */
++	{ IMX377_REG_8BIT(0x30CA), 0x00 }, /* MDPLS47 */
++	{ IMX377_REG_8BIT(0x30CB), 0x00 }, /* MDPLS47 */
++	{ IMX377_REG_8BIT(0x30CC), 0x00 }, /* MDPLS48 */
++	{ IMX377_REG_8BIT(0x30D0), 0x00 }, /* MDPLS52 */
++	{ IMX377_REG_8BIT(0x30D1), 0x00 }, /* MDPLS52 */
++	{ IMX377_REG_8BIT(0x30D5), 0x00 }, /* VWIDCUTEN */
++	{ IMX377_REG_8BIT(0x30D6), 0x00 }, /* VWIDCUT */
++	{ IMX377_REG_8BIT(0x30D7), 0x00 }, /* VWIDCUT */
++	{ IMX377_REG_8BIT(0x30D8), 0x00 }, /* VWINPOS */
++	{ IMX377_REG_8BIT(0x30D9), 0x00 }, /* VWINPOS */
++	{ IMX377_REG_8BIT(0x30DA), 0x04 }, /* MDREG01 */
++	{ IMX377_REG_8BIT(0x30EE), 0x01 }, /* MDREG02 */
++	{ IMX377_REG_8BIT(0x30F5), 0x04 }, /* HMAX */
++	{ IMX377_REG_8BIT(0x30F6), 0x01 }, /* HMAX */
++	{ IMX377_REG_8BIT(0x30F7), 0xCC }, /* VMAX */
++	{ IMX377_REG_8BIT(0x30F8), 0x08 }, /* VMAX */
++	{ IMX377_REG_8BIT(0x30F9), 0x00 }, /* VMAX */
++	{ IMX377_REG_8BIT(0x312F), 0xE2 }, /* MDSEL9 */
++	{ IMX377_REG_8BIT(0x3130), 0x02 }, /* MDSEL9 */
++	{ IMX377_REG_8BIT(0x3131), 0xDE }, /* MDSEL10 */
++	{ IMX377_REG_8BIT(0x3132), 0x02 }, /* MDSEL10 */
++	{ IMX377_REG_8BIT(0x3A41), 0x04 }, /* MDSEL11 */
++
++	{ IMX377_TABLE_END, 0 }
++};
++
++static int imx377_write_array(struct imx377 *sensor, const struct imx377_reg *regs)
++{
++	int ret = 0;
++	size_t i;
++
++	for (i = 0; regs[i].reg != IMX377_TABLE_END; ++i) {
++		if (regs[i].reg == IMX377_TABLE_WAIT_MS) {
++			msleep(regs[i].value);
++			continue;
++		}
++		ret = imx377_write(sensor, regs[i].reg, regs[i].value);
++		if (ret < 0)
++			return ret;
++	}
++
++	return 0;
++}
++
++static int imx377_apply_trimming(struct imx377 *sensor)
++{
++	u32 h_start, h_end;
++	u32 v_cut, v_pos, mdsel10;
++	int ret = 0;
++
++	h_start = sensor->crop.left + 48;
++	h_end = h_start + sensor->crop.width + 1;
++
++	v_pos = sensor->crop.top / 2;
++	v_cut = sensor->crop.height / 2;
++
++	ret |= imx377_write(sensor, IMX377_HTRIMMING_START, h_start);
++	ret |= imx377_write(sensor, IMX377_HTRIMMING_END, h_end);
++	ret |= imx377_write(sensor, IMX377_HTRIMMING_EN, 1);
++
++	ret |= imx377_write(sensor, IMX377_VWINPOS, v_pos);
++	ret |= imx377_write(sensor, IMX377_VWIDCUT, v_cut);
++
++	mdsel10 = sensor->crop.height;
++	ret |= imx377_write(sensor, IMX377_MDSEL10, mdsel10);
++	ret |= imx377_write(sensor, IMX377_MDSEL9, mdsel10 + 8 * 2);
++
++	ret |= imx377_write(sensor, IMX377_VWIDCUTEN, 1);
++
++	return ret;
++}
++static int imx377_setup(struct imx377 *sensor)
++{
++	const struct v4l2_mbus_framefmt *format;
++	const struct v4l2_rect *crop;
++	int ret = 0;
++
++	format = &sensor->format;
++	crop = &sensor->crop;
++
++	ret = imx377_write_array(sensor, imx377_init_table);
++	if (ret)
++		return ret;
++
++	ret = imx377_write_array(sensor, imx377_readout_mode1);
++	if (ret)
++		return ret;
++
++	ret = imx377_apply_trimming(sensor);
++	if (ret)
++		return ret;
++
++	if (sensor->lane_conf_regs) {
++		ret = imx377_write_array(sensor, sensor->lane_conf_regs);
++		if (ret)
++			return ret;
++	}
++
++	return ret;
++}
++
++static int imx377_stream_on(struct imx377 *sensor)
++{
++	int ret = 0;
++
++	ret |= imx377_write(sensor, IMX377_EBDDATAEN, 1);
++	ret |= imx377_write(sensor, IMX377_SMD, IMX377_SMD_ROLLING_SHUTTER);
++	ret |= imx377_write(sensor, IMX377_BLKLEVEL, IMX377_BLKLEVEL_DEFAULT);
++
++	ret = imx377_write(sensor, IMX377_CLPSQRST, 1);
++	ret |= imx377_write(sensor, IMX377_XMSTA, IMX377_XMSTA_MASTRE_MODE_START);
++	if (ret)
++		return ret;
++	usleep_range(50000, 70000);
++
++	return imx377_write(sensor, IMX377_CTRL00, IMX377_CTRL00_NORMAL_OPERATION);
++}
++
++static int imx377_stream_off(struct imx377 *sensor)
++{
++	int ret;
++
++	ret = imx377_write(sensor, IMX377_XMSTA, IMX377_XMSTA_MASTRE_MODE_STOP);
++	ret |= imx377_write(sensor, IMX377_CTRL00, IMX377_CTRL00_STANDBY);
++
++	return ret;
++}
++
++static int imx377_s_stream(struct v4l2_subdev *sd, int enable)
++{
++	struct imx377 *sensor = to_imx377(sd);
++	int ret = 0;
++
++	mutex_lock(&sensor->lock);
++	if (!enable) {
++		imx377_stream_off(sensor);
++
++		pm_runtime_mark_last_busy(sensor->dev);
++		pm_runtime_put_autosuspend(sensor->dev);
++
++		sensor->streaming = false;
++
++		goto unlock;
++	}
++
++	ret = pm_runtime_resume_and_get(sensor->dev);
++	if (ret < 0)
++		goto unlock;
++
++	ret = imx377_setup(sensor);
++	if (ret < 0)
++		goto err_pm;
++
++	/*
++	 * Set streaming to true to ensure __v4l2_ctrl_handler_setup() will set
++	 * the controls. The flag is reset to false further down if an error
++	 * occurs.
++	 */
++	sensor->streaming = true;
++
++	ret = __v4l2_ctrl_handler_setup(&sensor->ctrls);
++	if (ret < 0)
++		goto err_pm;
++
++	ret = imx377_stream_on(sensor);
++	if (ret)
++		goto err_pm;
++
++unlock:
++	mutex_unlock(&sensor->lock);
++
++	return ret;
++
++err_pm:
++	/*
++	 * In case of error, turn the power off synchronously as the device
++	 * likely has no other chance to recover.
++	 */
++	mutex_lock(&sensor->lock);
++	pm_runtime_put_sync(sensor->dev);
++	sensor->streaming = false;
++
++	goto unlock;
++}
++
++static int imx377_enum_mbus_code(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_pad_config *cfg,
++				 struct v4l2_subdev_mbus_code_enum *code)
++{
++	if (code->index != 0)
++		return -EINVAL;
++
++	code->code = IMX377_DEFAULT_DATAFMT;
++
++	return 0;
++}
++
++static int imx377_enum_frame_size(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_pad_config *cfg,
++				  struct v4l2_subdev_frame_size_enum *fse)
++{
++	const struct v4l2_mbus_framefmt *format;
++	struct imx377 *sensor = to_imx377(sd);
++
++	format = &sensor->format;
++
++	if (fse->index >= 1 || fse->code != format->code)
++		return -EINVAL;
++
++	fse->min_width = IMX377_PIXEL_ARRAY_WIDTH / (fse->index + 1);
++	fse->max_width = fse->min_width;
++	fse->min_height = IMX377_PIXEL_ARRAY_HEIGHT / (fse->index + 1);
++	fse->max_height = fse->min_height;
++
++	return 0;
++}
++
++static int imx377_get_format(struct v4l2_subdev *sd,
++			     struct v4l2_subdev_pad_config *cfg,
++			     struct v4l2_subdev_format *fmt)
++{
++	struct imx377 *sensor = to_imx377(sd);
++
++	mutex_lock(&sensor->lock);
++	fmt->format = sensor->format;
++	mutex_unlock(&sensor->lock);
++
++	return 0;
++}
++
++static int imx377_set_format(struct v4l2_subdev *sd,
++			     struct v4l2_subdev_pad_config *cfg,
++			     struct v4l2_subdev_format *fmt)
++{
++	struct imx377 *sensor = to_imx377(sd);
++	struct v4l2_mbus_framefmt *format;
++	struct v4l2_rect *crop;
++
++	crop = &sensor->crop;
++	format = &sensor->format;
++
++	mutex_lock(&sensor->lock);
++
++	format->width = crop->width;
++	format->height = crop->height;
++
++	format->code = IMX377_DEFAULT_DATAFMT;
++	format->field = V4L2_FIELD_NONE;
++	format->colorspace = V4L2_COLORSPACE_RAW;
++	format->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
++	format->quantization = V4L2_QUANTIZATION_FULL_RANGE;
++	format->xfer_func = V4L2_XFER_FUNC_NONE;
++
++	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY)
++		cfg->try_fmt = *format;
++	else
++		fmt->format = *format;
++
++	mutex_unlock(&sensor->lock);
++	return 0;
++}
++
++static int imx377_get_selection(struct v4l2_subdev *sd,
++				struct v4l2_subdev_pad_config *cfg,
++				struct v4l2_subdev_selection *sel)
++{
++	struct imx377 *sensor = to_imx377(sd);
++
++	mutex_lock(&sensor->lock);
++
++	switch (sel->target) {
++	case V4L2_SEL_TGT_CROP:
++		if (sel->which == V4L2_SUBDEV_FORMAT_TRY)
++			sel->r = cfg->try_crop;
++		else
++			sel->r = sensor->crop;
++		break;
++
++	case V4L2_SEL_TGT_CROP_DEFAULT:
++	case V4L2_SEL_TGT_CROP_BOUNDS:
++	case V4L2_SEL_TGT_NATIVE_SIZE:
++		sel->r.left = 0;
++		sel->r.top = 0;
++		sel->r.width = IMX377_PIXEL_ARRAY_WIDTH;
++		sel->r.height = IMX377_PIXEL_ARRAY_HEIGHT;
++		break;
++
++	default:
++		mutex_unlock(&sensor->lock);
++		return -EINVAL;
++	}
++	mutex_unlock(&sensor->lock);
++
++	return 0;
++}
++
++static int imx377_set_selection(struct v4l2_subdev *sd,
++				struct v4l2_subdev_pad_config *cfg,
++				struct v4l2_subdev_selection *sel)
++{
++	struct imx377 *sensor = to_imx377(sd);
++	struct v4l2_mbus_framefmt *format;
++	struct v4l2_rect *crop;
++	struct v4l2_rect rect;
++
++	if (sel->target != V4L2_SEL_TGT_CROP)
++		return -EINVAL;
++
++	rect.left = clamp(ALIGN(sel->r.left, 12), 0,
++			  IMX377_PIXEL_ARRAY_WIDTH);
++	rect.top = clamp(ALIGN(sel->r.top, 1), 0,
++			 IMX377_PIXEL_ARRAY_HEIGHT);
++	rect.width = clamp_t(unsigned int, ALIGN(sel->r.width, 12),
++			     240, IMX377_PIXEL_ARRAY_WIDTH);
++	rect.height = clamp_t(unsigned int, ALIGN(sel->r.height, 2),
++			      2, IMX377_PIXEL_ARRAY_HEIGHT);
++
++	rect.width = min_t(unsigned int, rect.width,
++			   IMX377_PIXEL_ARRAY_WIDTH - rect.left);
++	rect.height = clamp_t(unsigned int, rect.height, 260,
++			    IMX377_PIXEL_ARRAY_HEIGHT - rect.top);
++
++	mutex_lock(&sensor->lock);
++	if (sel->which == V4L2_SUBDEV_FORMAT_TRY)
++		crop = &cfg->try_crop;
++	else
++		crop = &sensor->crop;
++
++	if (rect.width != crop->width || rect.height != crop->height) {
++		/*
++		 * Reset the output image size if the crop rectangle size has
++		 * been modified.
++		 */
++		format = &sensor->format;
++		format->width = rect.width;
++		format->height = rect.height;
++	}
++
++	*crop = rect;
++	sel->r = rect;
++	mutex_unlock(&sensor->lock);
++
++	return 0;
++}
++
++static int imx377_init_cfg(struct v4l2_subdev *sd,
++			   struct v4l2_subdev_pad_config *cfg)
++{
++	struct v4l2_subdev_selection sel = {
++		.target = V4L2_SEL_TGT_CROP,
++		.r.width = IMX377_PIXEL_ARRAY_WIDTH,
++		.r.height = IMX377_PIXEL_ARRAY_HEIGHT,
++	};
++	struct v4l2_subdev_format format = {
++		.format = {
++			.width = IMX377_PIXEL_ARRAY_WIDTH,
++			.height = IMX377_PIXEL_ARRAY_HEIGHT,
++		},
++	};
++
++	imx377_set_selection(sd, cfg, &sel);
++	imx377_set_format(sd, cfg, &format);
++
++	return 0;
++}
++
++static const struct v4l2_subdev_video_ops imx377_subdev_video_ops = {
++	.s_stream = imx377_s_stream,
++};
++
++static const struct v4l2_subdev_pad_ops imx377_subdev_pad_ops = {
++	.enum_mbus_code = imx377_enum_mbus_code,
++	.enum_frame_size = imx377_enum_frame_size,
++	.get_fmt = imx377_get_format,
++	.set_fmt = imx377_set_format,
++	.get_selection = imx377_get_selection,
++	.set_selection = imx377_set_selection,
++	.init_cfg = imx377_init_cfg,
++};
++
++static const struct v4l2_subdev_ops imx377_subdev_ops = {
++	.video = &imx377_subdev_video_ops,
++	.pad = &imx377_subdev_pad_ops,
++};
++
++static int imx377_subdev_init(struct imx377 *sensor)
++{
++	struct i2c_client *client = to_i2c_client(sensor->dev);
++	int ret;
++
++	v4l2_i2c_subdev_init(&sensor->subdev, client, &imx377_subdev_ops);
++
++	ret = imx377_ctrls_init(sensor);
++	if (ret < 0)
++		return ret;
++
++	sensor->subdev.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++	sensor->pad.flags = MEDIA_PAD_FL_SOURCE;
++	sensor->subdev.entity.function = MEDIA_ENT_F_CAM_SENSOR;
++	ret = media_entity_pads_init(&sensor->subdev.entity, 1, &sensor->pad);
++	if (ret < 0) {
++		v4l2_ctrl_handler_free(&sensor->ctrls);
++		return ret;
++	}
++
++	return ret;
++}
++
++static void imx377_subdev_cleanup(struct imx377 *sensor)
++{
++	media_entity_cleanup(&sensor->subdev.entity);
++	v4l2_ctrl_handler_free(&sensor->ctrls);
++}
++
++/* -----------------------------------------------------------------------------
++ * Power management
++ */
++
++static int __maybe_unused imx377_runtime_resume(struct device *dev)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
++	struct imx377 *sensor = to_imx377(subdev);
++
++	return imx377_power_on(sensor);
++}
++
++static int __maybe_unused imx377_runtime_suspend(struct device *dev)
++{
++	struct i2c_client *client = to_i2c_client(dev);
++	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
++	struct imx377 *sensor = to_imx377(subdev);
++
++	imx377_power_off(sensor);
++
++	return 0;
++}
++
++static const struct dev_pm_ops imx377_pm_ops = {
++	SET_RUNTIME_PM_OPS(imx377_runtime_suspend, imx377_runtime_resume, NULL)
++};
++
++/* -----------------------------------------------------------------------------
++ * Probe & Remove
++ */
++
++static const struct regmap_config imx377_regmap_config = {
++	.reg_bits = 16,
++	.val_bits = 8,
++	.cache_type = REGCACHE_RBTREE,
++};
++
++static int imx377_fwnode_parse(struct device *dev, struct imx377 *sensor)
++{
++	struct fwnode_handle *endpoint;
++	/* Only CSI2 is supported */
++	struct v4l2_fwnode_endpoint ep = {
++		.bus_type = V4L2_MBUS_CSI2_DPHY
++	};
++	int ret;
++
++	endpoint = fwnode_graph_get_next_endpoint(dev_fwnode(dev), NULL);
++	if (!endpoint) {
++		dev_err(dev, "Endpoint node not found\n");
++		return -EINVAL;
++	}
++
++	ret = v4l2_fwnode_endpoint_parse(endpoint, &ep);
++	fwnode_handle_put(endpoint);
++	if (ret == -ENXIO) {
++		dev_err(dev, "Unsupported bus type, should be CSI2\n");
++		return ret;
++	} else if (ret) {
++		dev_err(dev, "Parsing endpoint node failed %d\n", ret);
++		return ret;
++	}
++
++	/* Check number of data lanes, only 4 lanes supported */
++	switch (ep.bus.mipi_csi2.num_data_lanes) {
++	case 2:
++		sensor->lane_conf_regs = imx377_2_lane_conf;
++		fallthrough;
++	case 4:
++		break;
++	default:
++		dev_err(dev, "Invalid data lanes: %d\n",
++			ep.bus.mipi_csi2.num_data_lanes);
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int imx377_probe(struct i2c_client *client)
++{
++	struct i2c_adapter *adapter = to_i2c_adapter(client->dev.parent);
++	unsigned long clk_rate;
++	struct imx377 *sensor;
++	unsigned int i;
++	int ret;
++
++	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA)) {
++		dev_warn(&adapter->dev,
++			 "I2C-Adapter doesn't support I2C_FUNC_SMBUS_BYTE\n");
++		return -EIO;
++	}
++
++	sensor = devm_kzalloc(&client->dev, sizeof(*sensor), GFP_KERNEL);
++	if (!sensor)
++		return -ENOMEM;
++
++	mutex_init(&sensor->lock);
++	sensor->dev = &client->dev;
++
++	ret = imx377_fwnode_parse(&client->dev, sensor);
++	if (ret)
++		return ret;
++
++	/* Acquire resources. */
++	for (i = 0; i < ARRAY_SIZE(sensor->supplies); ++i)
++		sensor->supplies[i].supply = imx377_supply_names[i];
++
++	ret = devm_regulator_bulk_get(sensor->dev, ARRAY_SIZE(sensor->supplies),
++				      sensor->supplies);
++	if (ret) {
++		dev_err_probe(sensor->dev, ret, "failed to get supplies\n");
++		return ret;
++	}
++
++	sensor->reset = devm_gpiod_get_optional(sensor->dev, "reset",
++						GPIOD_OUT_HIGH);
++	if (IS_ERR(sensor->reset))
++		return dev_err_probe(sensor->dev, PTR_ERR(sensor->reset),
++				     "failed to get reset GPIO\n");
++
++	sensor->clk = devm_clk_get(sensor->dev, "inck");
++	if (IS_ERR(sensor->clk))
++		return dev_err_probe(sensor->dev, PTR_ERR(sensor->clk),
++				     "failed to get clock\n");
++
++	clk_rate = clk_get_rate(sensor->clk);
++	if (clk_rate != IMX377_DEFAULT_CLK_FREQ) {
++		dev_err(sensor->dev,
++			"unsupported clock rate %lu, driver supports %u\n",
++			clk_rate, IMX377_DEFAULT_CLK_FREQ);
++		return -EINVAL;
++	}
++
++	sensor->regmap = devm_regmap_init_i2c(client, &imx377_regmap_config);
++	if (IS_ERR(sensor->regmap))
++		return PTR_ERR(sensor->regmap);
++
++	/*
++	 * Enable power management. The driver supports runtime PM, but needs to
++	 * work when runtime PM is disabled in the kernel. To that end, power
++	 * the sensor on manually here, identify it, and fully initialize it.
++	 */
++	ret = imx377_power_on(sensor);
++	if (ret < 0)
++		return ret;
++
++	ret = imx377_stream_off(sensor);
++	if (ret < 0) {
++		dev_err(sensor->dev, "Cannot talk to the sensor %d\n", ret);
++		goto err_power;
++	}
++
++	sensor->crop.top = 0;
++	sensor->crop.left = 0;
++	sensor->crop.width = IMX377_PIXEL_ARRAY_WIDTH;
++	sensor->crop.height = IMX377_PIXEL_ARRAY_HEIGHT;
++
++	sensor->format.width = IMX377_PIXEL_ARRAY_WIDTH;
++	sensor->format.height = IMX377_PIXEL_ARRAY_HEIGHT;
++	sensor->format.field = V4L2_FIELD_NONE;
++	sensor->format.code = IMX377_DEFAULT_DATAFMT;
++	sensor->format.colorspace = V4L2_COLORSPACE_RAW;
++	sensor->format.ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
++	sensor->format.quantization = V4L2_QUANTIZATION_FULL_RANGE;
++	sensor->format.xfer_func = V4L2_XFER_FUNC_NONE;
++
++	/* Initialize the V4L2 subdev. */
++	ret = imx377_subdev_init(sensor);
++	if (ret < 0)
++		goto err_power;
++
++	sensor->ctrls.lock = &sensor->lock;
++
++	/*
++	 * Enable runtime PM. As the device has been powered manually, mark it
++	 * as active, and increase the usage count without resuming the device.
++	 */
++	pm_runtime_set_active(sensor->dev);
++	pm_runtime_get_noresume(sensor->dev);
++	pm_runtime_enable(sensor->dev);
++
++	/* Register the V4L2 subdev. */
++	ret = v4l2_async_register_subdev(&sensor->subdev);
++	if (ret < 0)
++		goto err_pm;
++
++	/*
++	 * Finally, enable autosuspend and decrease the usage count. The device
++	 * will get suspended after the autosuspend delay, turning the power
++	 * off.
++	 */
++	pm_runtime_set_autosuspend_delay(sensor->dev, 1000);
++	pm_runtime_use_autosuspend(sensor->dev);
++	pm_runtime_put_autosuspend(sensor->dev);
++
++	return 0;
++
++err_pm:
++	pm_runtime_disable(sensor->dev);
++	pm_runtime_put_noidle(sensor->dev);
++	imx377_subdev_cleanup(sensor);
++err_power:
++	imx377_power_off(sensor);
++	return ret;
++}
++
++static int imx377_remove(struct i2c_client *client)
++{
++	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
++	struct imx377 *sensor = to_imx377(subdev);
++
++	v4l2_async_unregister_subdev(subdev);
++
++	imx377_subdev_cleanup(sensor);
++
++	/*
++	 * Disable runtime PM. In case runtime PM is disabled in the kernel,
++	 * make sure to turn power off manually.
++	 */
++	pm_runtime_disable(sensor->dev);
++	if (!pm_runtime_status_suspended(sensor->dev))
++		imx377_power_off(sensor);
++	pm_runtime_set_suspended(sensor->dev);
++
++	return 0;
++}
++
++static const struct of_device_id imx377_of_match[] = {
++	{ .compatible = "sony,imx377", .data = NULL },
++	{ /* sentinel */ },
++};
++MODULE_DEVICE_TABLE(of, imx377_of_match);
++
++static struct i2c_driver imx377_i2c_driver = {
++	.driver = {
++		.of_match_table = imx377_of_match,
++		.name = "imx377",
++		.pm = &imx377_pm_ops
++	},
++	.probe_new = imx377_probe,
++	.remove = imx377_remove,
++};
++
++module_i2c_driver(imx377_i2c_driver);
++
++MODULE_DESCRIPTION("Sony IMX377 Camera driver");
++MODULE_AUTHOR("Alexandru Ardelean <alex@shruggie.ro>");
++MODULE_LICENSE("GPL");

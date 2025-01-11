@@ -1,0 +1,123 @@
+From eea8b53741c3b594ee5d166fb45445b825dbfde8 Mon Sep 17 00:00:00 2001
+From: Alexandru Ardelean <alex@shruggie.ro>
+Date: Wed, 18 Dec 2024 06:37:44 +0200
+Subject: [PATCH 07/12] media: i2c: imx274: split init controls in a separate
+ function
+
+Before adding new controls, move this block of code into a separate
+function to unclutter the probe function.
+
+Signed-off-by: Alexandru Ardelean <alex@shruggie.ro>
+---
+ drivers/media/i2c/imx274.c | 87 ++++++++++++++++++++++----------------
+ 1 file changed, 50 insertions(+), 37 deletions(-)
+
+diff --git a/drivers/media/i2c/imx274.c b/drivers/media/i2c/imx274.c
+index 6a2a17ac8..4ded481fe 100644
+--- a/drivers/media/i2c/imx274.c
++++ b/drivers/media/i2c/imx274.c
+@@ -1991,6 +1991,54 @@ static int imx274_fwnode_parse(struct device *dev)
+ 	return 0;
+ }
+ 
++static int imx274_init_controls(struct stimx274 *imx274)
++{
++	struct device *dev = &imx274->client->dev;
++	int ret;
++
++	ret = v4l2_ctrl_handler_init(&imx274->ctrls.handler, 4);
++	if (ret < 0) {
++		dev_err(dev, "%s: ctrl handler init failed: %d\n", __func__, ret);
++		return ret;
++	}
++
++	imx274->ctrls.handler.lock = &imx274->lock;
++
++	/* add new controls */
++	imx274->ctrls.test_pattern = v4l2_ctrl_new_std_menu_items(
++		&imx274->ctrls.handler, &imx274_ctrl_ops,
++		V4L2_CID_TEST_PATTERN,
++		ARRAY_SIZE(tp_qmenu) - 1, 0, 0, tp_qmenu);
++
++	imx274->ctrls.gain = v4l2_ctrl_new_std(
++		&imx274->ctrls.handler,
++		&imx274_ctrl_ops,
++		V4L2_CID_GAIN, IMX274_MIN_GAIN,
++		IMX274_MAX_DIGITAL_GAIN * IMX274_MAX_ANALOG_GAIN, 1,
++		IMX274_DEF_GAIN);
++
++	imx274->ctrls.exposure = v4l2_ctrl_new_std(
++		&imx274->ctrls.handler,
++		&imx274_ctrl_ops,
++		V4L2_CID_EXPOSURE, IMX274_MIN_EXPOSURE_TIME,
++		1000000 / IMX274_DEF_FRAME_RATE, 1,
++		IMX274_MIN_EXPOSURE_TIME);
++
++	imx274->ctrls.vflip = v4l2_ctrl_new_std(
++		&imx274->ctrls.handler,
++		&imx274_ctrl_ops,
++		V4L2_CID_VFLIP, 0, 1, 1, 0);
++
++	imx274->sd.ctrl_handler = &imx274->ctrls.handler;
++	if (imx274->ctrls.handler.error) {
++		ret = imx274->ctrls.handler.error;
++		v4l2_ctrl_handler_free(&imx274->ctrls.handler);
++		dev_err(dev, "%s: adding controls failed %d\n", __func__, ret);
++	}
++
++	return ret;
++}
++
+ static int imx274_probe(struct i2c_client *client)
+ {
+ 	struct v4l2_subdev *sd;
+@@ -2073,44 +2121,9 @@ static int imx274_probe(struct i2c_client *client)
+ 	}
+ 
+ 	/* initialize controls */
+-	ret = v4l2_ctrl_handler_init(&imx274->ctrls.handler, 4);
+-	if (ret < 0) {
+-		dev_err(dev, "%s : ctrl handler init Failed\n", __func__);
++	ret = imx274_init_controls(imx274);
++	if (ret < 0)
+ 		goto err_power_off;
+-	}
+-
+-	imx274->ctrls.handler.lock = &imx274->lock;
+-
+-	/* add new controls */
+-	imx274->ctrls.test_pattern = v4l2_ctrl_new_std_menu_items(
+-		&imx274->ctrls.handler, &imx274_ctrl_ops,
+-		V4L2_CID_TEST_PATTERN,
+-		ARRAY_SIZE(tp_qmenu) - 1, 0, 0, tp_qmenu);
+-
+-	imx274->ctrls.gain = v4l2_ctrl_new_std(
+-		&imx274->ctrls.handler,
+-		&imx274_ctrl_ops,
+-		V4L2_CID_GAIN, IMX274_MIN_GAIN,
+-		IMX274_MAX_DIGITAL_GAIN * IMX274_MAX_ANALOG_GAIN, 1,
+-		IMX274_DEF_GAIN);
+-
+-	imx274->ctrls.exposure = v4l2_ctrl_new_std(
+-		&imx274->ctrls.handler,
+-		&imx274_ctrl_ops,
+-		V4L2_CID_EXPOSURE, IMX274_MIN_EXPOSURE_TIME,
+-		1000000 / IMX274_DEF_FRAME_RATE, 1,
+-		IMX274_MIN_EXPOSURE_TIME);
+-
+-	imx274->ctrls.vflip = v4l2_ctrl_new_std(
+-		&imx274->ctrls.handler,
+-		&imx274_ctrl_ops,
+-		V4L2_CID_VFLIP, 0, 1, 1, 0);
+-
+-	imx274->sd.ctrl_handler = &imx274->ctrls.handler;
+-	if (imx274->ctrls.handler.error) {
+-		ret = imx274->ctrls.handler.error;
+-		goto err_ctrls;
+-	}
+ 
+ 	/* load default control values */
+ 	imx274_load_default(imx274);
+-- 
+2.47.1
+
