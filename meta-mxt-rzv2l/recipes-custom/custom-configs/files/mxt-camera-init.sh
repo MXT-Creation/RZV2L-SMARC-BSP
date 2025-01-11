@@ -55,7 +55,7 @@ for MEDIA_DEV in /dev/media* ; do
 
 	SENSOR_DEV=$(get_sensor_dev $MEDIA_DEV IMX274)
 	if [ -n "$SENSOR_DEV" ] ; then
-		if media-ctl -d $MEDIA_DEV -V "'$SENSOR_DEV':0 [fmt:SRGGB10_1X10/1920x1080@1/15]" &> /dev/null ; then
+		if media-ctl -d $MEDIA_DEV -V "'$SENSOR_DEV':0 [fmt:SRGGB10_1X10/1920x1080@1/10]" &> /dev/null ; then
 			echo "Using sensor '$SENSOR_DEV'"
 			media-ctl -d $MEDIA_DEV -V "${CSI2_DEV} [fmt:SRGGB10_1X10/1920x1080 field:none]"
 			media-ctl -d $MEDIA_DEV -l "${CSI2_DEV} -> ${CRU_OUTPUT}"
