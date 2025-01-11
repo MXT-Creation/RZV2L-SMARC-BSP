@@ -1,0 +1,13 @@
+[Unit]
+Description=Custom service for initializing cameras on RZV systems at system boot
+After=systemd-user-sessions.service
+
+[Service]
+ExecStart=/usr/bin/mxt-camera-init.sh
+Type=oneshot
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=mxt-camera-init
+
+[Install]
+WantedBy=multi-user.target
